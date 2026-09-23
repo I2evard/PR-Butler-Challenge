@@ -1,4 +1,16 @@
 {
   "app.title": "Mon Gestionnaire de Tâches",
-  "task.add": "Ajouter une Nouvelle Tâche"
+  "task.add": "Ajouter une Nouvelle Tâche",
+  "task.placeholder": "Saisir la description de la tâche",
+  "priority.low": "Priorité faible",
+  "priority.medium": "Priorité moyenne",
+  "priority.high": "Priorité élevée",
+  "button.add": "Ajouter la tâche",
+  "filter.all": "Toutes les tâches",
+  "filter.active": "Actives",
+  "filter.completed": "Terminées",
+  "stats.total": "Total des tâches",
+  "stats.completed": "Terminées",
+  "button.delete": "Supprimer",
+  "footer.text": "Conçu avec TypeScript"
 }
