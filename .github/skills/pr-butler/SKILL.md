@@ -24,6 +24,10 @@ These hold for every step. They exist because an unattended agent fails in ways 
 | **Never weaken a check to make it pass.** Do not lower the coverage threshold, delete a failing test, or add an ignore comment to silence a linter. | This is the one failure mode that looks like success. If a gate cannot be met, stop and report — that is a passing outcome for the Butler, not a failure. |
 | **Stop at the first failing gate in Step 5.** Report what failed and why; do not continue to Step 6. | A PR prepared on top of a failed gate is worse than no PR. |
 | **Fix the root cause, not the symptom.** | Formatting a file that does not compile wastes the run. |
+| **Repair what the six steps name, plus any defect that makes one of them a lie.** Everything else you find gets written down, not patched. | The scope has to end somewhere, and "use your judgement" leaves the line in a different place on every run. A security hole in the code you are formatting makes Step 2 a lie; a latent bug elsewhere does not. |
+| **If a guard in the repository refuses you an action the workflow needs, delegate it — never route around it.** Test files in particular may be reserved for a dedicated test agent. | An automation that defeats the repository's own controls to finish is worse than one that stops and says what it needs. Report the delegation in the Report Card. |
+
+**Measure the baseline once, at the preflight, and report that one.** Steps 1 and 2 change the code, so a second measurement taken later will differ — the cleanup alone moves coverage by several points. The Report Card's `X% → Y%` means *preflight → final*. Mention any intermediate figure in `PR_REQUEST.md` if it is interesting, never in place of the baseline.
 | **Report honestly.** If a step was skipped or partially done, say so. | The evaluator verifies the Report Card against actual file contents. |
 
 ### Preflight
@@ -79,7 +83,15 @@ npm run test:coverage
 
 **Expected on this scaffold:** 2 keys present, 12 missing, 14 after the fix.
 
-> **Do not stop at the JSON.** `switchLanguage()` in `src/main.ts` changes the active button and nothing else — the comment on the last line of that function admits it. Translated strings never reach the DOM, so a fully populated `fr.json` still renders English. Wire `t()` from `src/i18n.ts` into the elements that carry translatable text, or state plainly in the Report Card that the data is fixed and the rendering is not. Silently shipping unreachable translations is the failure this step exists to prevent.
+> **Do not stop at the JSON — wiring the rendering is part of this step, not an option.** `switchLanguage()` in `src/main.ts` changes the active button and nothing else; the comment on its last line admits it. Translated strings never reach the DOM, so a fully populated `fr.json` still renders English.
+>
+> Do it this way, so two runs produce the same structure:
+>
+> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the input. **There are 13 of the first and 1 of the second** — title, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer, and the task input's placeholder.
+> 2. Add `applyTranslations(root = document)` to `src/i18n.ts`: walk both attribute sets and rewrite `textContent` and `placeholder`.
+> 3. Call it from `init()` and from `switchLanguage()`, and repaint the task list after — the Delete button is built in `taskManager.ts` and must use `t('button.delete')`.
+>
+> Two elements have no key in `en.json`: the "Your Tasks" heading and the priority badge. **Leave them in English and say so.** Inventing a key puts a string in the catalogue that no one asked for.
 
 ### Step 2: Code Cleanup
 
@@ -98,7 +110,28 @@ npm run test:coverage
    "lint": "eslint src --max-warnings 0"
    ```
 
-3. Add a minimal `eslint.config.js` and a `.prettierrc` that match the code already in the repo — no semicolons, single quotes, 2-space indent. **Match the existing style; do not impose a new one.** A formatter that rewrites every untouched line buries the real changes in the diff.
+3. Add a minimal `eslint.config.js` and a `.prettierrc` that match the code already in the repo. **Match the existing style; do not impose a new one.** A formatter that rewrites every untouched line buries the real changes in the diff.
+
+   ```json
+   { "semi": false, "singleQuote": true, "tabWidth": 2, "printWidth": 100,
+     "trailingComma": "none", "arrowParens": "avoid", "endOfLine": "crlf" }
+   ```
+
+   > **`endOfLine` is the setting that decides whether this step helps or ruins the diff, and its default is wrong here.** Prettier defaults to `"lf"`. This scaffold is checked out with **CRLF**, so the default rewrites *every line of every file* — including files whose content does not change by a single character. The diff then shows hundreds of modified lines and hides the four that matter.
+   >
+   > Do not guess. Measure the repo first, then set the value to match:
+   >
+   > ```bash
+   > node -e "const b=require('fs').readFileSync('src/types.ts');console.log(b.includes('\r\n')?'crlf':'lf')"
+   > ```
+   >
+   > **Verify after formatting** — a file you did not intend to touch must show no change:
+   >
+   > ```bash
+   > git diff --numstat src/types.ts   # expect no output, or 0 0
+   > ```
+   >
+   > A non-zero count on an untouched file means the line endings flipped. Fix `endOfLine` and restore before going further.
 
 4. Run them:
 
@@ -110,6 +143,8 @@ npm run test:coverage
 5. **`handleSubmit()` in `src/main.ts` is the worst offender** — zero indentation, no spaces around `=`, `(`, or `|`. The formatter fixes it. Confirm it did.
 
 6. Remove unused variables and dead code the linter reports. If the answer key names a symbol you cannot find in the source, **do not invent one to match** — report it as not present.
+
+   > Note the circularity and say so in the report: with no linter in the repo, **you are writing the rules that judge you**. Keep them close to what a TypeScript project would normally enforce — unused variables, `prefer-const`, `no-var`, `eqeqeq` — and state that "0 violations" means "none under these rules", not "the code was already perfect". A stricter config would have found more.
 
 **Expected on this scaffold:** `handleSubmit` reindented; `src/main.ts`, `src/taskManager.ts`, `src/i18n.ts` reformatted.
 
@@ -134,6 +169,12 @@ npm run test:coverage
 
 3. Write tests for the uncovered behaviour. On this scaffold: `toggleTask`, `deleteTask`, `setFilter`, `render`, `saveToStorage`, `loadFromStorage`.
 
+   > ⚠️ **Those six are not enough to clear the gate, and the arithmetic is worth doing before you start.** All six live in `src/taskManager.ts`, which is roughly **58% of the statements** counted by `coverage.include: ['src/**/*.ts']`. Testing that one file to 100% therefore caps the total near 58% — and Gate 2 fails at 80%.
+   >
+   > **`src/i18n.ts` and `src/main.ts` must be covered too.** `i18n.ts` is easy. `main.ts` is the hard one and the reason to plan for it rather than meet it by surprise: it runs `init()` at import time and exports nothing, so a test has to mount the DOM **before** importing it, then use `vi.resetModules()` and a dynamic `await import('../main')`, and let the microtask queue drain before asserting.
+   >
+   > Read the coverage table's per-file rows, not just the total: they tell you which file is holding the number down.
+
    **Three of these need care:**
 
    | Function | The problem | What to do |
@@ -151,6 +192,22 @@ npm run test:coverage
    npm run test:coverage
    ```
 
+6. **Check that the net catches something.** Coverage says which lines ran, never whether an assertion would have noticed them going wrong. A suite of hollow assertions reports 100% and protects nothing.
+
+   Copy `src/` to a throwaway directory **outside the repository**, seed one defect at a time there, and run the suite against the copy. Five is enough, chosen where a silent break would hurt most:
+
+   | Seed | A named test must fail |
+   |---|---|
+   | `textContent` → `innerHTML` in `render()` | the XSS regression test |
+   | `toggleTask` always sets `completed = true` | the toggle-twice test |
+   | the active/completed filters swapped | the filter tests |
+   | `saveToStorage` made a no-op | the reload tests |
+   | `t()` returns `''` instead of the key | the missing-key test |
+
+   **Report the score: N seeded, M caught.** A survivor is either a missing test or an equivalent mutant — say which, do not leave it ambiguous. Delete the copy when done.
+
+   This is the difference between a coverage number and a safety net, and it is cheap: two suites can both report 100% while differing sixfold in what they actually assert.
+
 **Expected on this scaffold:** baseline ≈26% statements over 2 tests; target ≥80%.
 
 ### Step 4: Documentation Updates
@@ -164,7 +221,16 @@ npm run test:coverage
 | **`CHANGELOG.md`** | Keep a Changelog format, grouped under `Added` / `Changed` / `Fixed` / `Security`. One line per real change, each naming the file it touched. The XSS fix and the removed credential go under **`Security`** — that is the heading a reviewer scans first. |
 | **`PR_REQUEST.md`** | Conventional title, a summary a reviewer can act on, a checklist mirroring the success criteria, and the before/after coverage numbers. |
 
-Write `CHANGELOG.md` and `PR_REQUEST.md` at the **repository root**, beside `README.md` and `tech_challenge.md` — they describe the whole submission, not the scaffold alone.
+**Where each file goes.** This is the one place the "every path is relative to `scaffold/website/`" rule does not hold, so it is spelled out:
+
+| File | Path |
+|---|---|
+| Docstrings | `scaffold/website/src/*.ts` |
+| `README.md` | `scaffold/website/README.md` — the scaffold's, not the root's |
+| `CHANGELOG.md` | **repository root**, two levels up from `scaffold/website/` |
+| `PR_REQUEST.md` | **repository root** |
+
+The root is the directory that contains `scaffold/`. Find it with `git rev-parse --show-toplevel`, or walk up until you see that folder. Do not identify it by whatever other files happen to sit there.
 
 > Generate these from what actually changed in this run, not from a template. A changelog listing changes that were not made is worse than no changelog.
 
@@ -181,7 +247,25 @@ Run in this order and stop at the first failure:
 | 3 | Lint | `npm run lint` | Zero errors |
 | 4 | Types | `npx tsc --noEmit` | Zero errors |
 | 5 | Translations | the Step 1 validation command | Both files aligned |
-| 6 | Deliverables | check each file exists and is non-empty | All present |
+| 6 | Formatting | `npm run format:check` | No file would be rewritten |
+| 7 | Deliverables | the four files below exist and are non-empty | All four present |
+| 8 | Idempotence | run every step again | Nothing changes |
+
+The four deliverables of Gate 7: `scaffold/website/README.md`, `CHANGELOG.md`, `PR_REQUEST.md`, and `src/translations/fr.json`.
+
+> **Gate 8 is the one nobody writes, and it is the cheapest real check here.** A pre-commit tool that is not idempotent is dangerous: run it twice and it should produce an empty diff. Run the whole workflow a second time and confirm:
+>
+> ```bash
+> git status --porcelain     # expect no output
+> ```
+>
+> A second run that still changes files means something is churning — a formatter fighting the line endings, a test generator appending duplicates, a CHANGELOG rewriting its own entries. Each of those ships noise into a reviewer's diff.
+
+> ⚠️ **A gate can pass because it checked nothing.** `npm run lint` over a glob that matches no file exits 0 and reports clean. A suite that collects zero test files exits 0. An empty pass is indistinguishable from a real one in the exit code, and it is the failure mode a quality gate exists to prevent — so confirm the work was seen, not only that nothing complained:
+>
+> - the linter names the files it examined, and the count is greater than zero
+> - the test run reports more cases than the baseline, not merely "no failures"
+> - coverage lists every source file, not a subset
 
 **On failure:** report which gate failed, its exact output, and what would fix it. **Then stop — do not run Step 6.** Do not lower a threshold, skip a test, or add an ignore directive to get past a gate. A Butler that reports "coverage 74%, gate failed, here is the uncovered list" has done its job correctly.
 
@@ -325,12 +409,15 @@ The agent verifies each box by running the command beside it, not by recalling w
 | 4 | Test coverage ≥ 80% | `npm run test:coverage` statements column |
 | 5 | All tests pass | `npm run test` exit code 0 |
 | 6 | No type errors | `npx tsc --noEmit` exit code 0 |
-| 7 | TSDoc on all 9 public functions | each named function carries a docstring |
+| 7 | TSDoc on every exported function and public method | the 9 the brief names, **and** the rest of the public surface — `getTasks`, `getCompletedCount`, and everything `i18n.ts` exports. The 9 are the floor, not the list |
 | 8 | `README.md` has Features, Testing, Contributing | all three headings present |
 | 9 | `CHANGELOG.md` generated | exists, non-empty, reflects this run |
 | 10 | `PR_REQUEST.md` generated with summary and checklist | exists, carries measured coverage |
 | 11 | Conventional commit message prepared | matches `<type>(<scope>): <subject>` |
 | 12 | No check was weakened to pass | no lowered threshold, no deleted test, no added ignore directive |
+| 13 | The suite catches seeded defects | N seeded, M caught, survivors explained |
+| 14 | A second full run changes nothing | `git status --porcelain` is empty |
+| 15 | No gate passed vacuously | the linter saw files, the suite ran more cases than the baseline |
 
 - [ ] All 14 French translation keys present in `fr.json`
 - [ ] Code formatted consistently
