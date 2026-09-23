@@ -17,13 +17,7 @@
  * 14. An element tagged with an unknown key shows the key, not an empty string
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import {
-  t,
-  setLanguage,
-  getCurrentLanguage,
-  loadTranslations,
-  applyTranslations
-} from '../i18n'
+import { t, setLanguage, getCurrentLanguage, loadTranslations, applyTranslations } from '../i18n'
 
 describe('i18n', () => {
   beforeEach(() => {
@@ -144,9 +138,7 @@ describe('i18n', () => {
       applyTranslations()
 
       expect(document.querySelector('h1')?.textContent).toBe('Mon Gestionnaire de Tâches')
-      expect(document.querySelector('input')?.placeholder).toBe(
-        'Saisir la description de la tâche'
-      )
+      expect(document.querySelector('input')?.placeholder).toBe('Saisir la description de la tâche')
     })
 
     it('translates only the requested subtree', () => {

@@ -1,6 +1,58 @@
 import { Task, TaskFilter } from './types'
 import { t } from './i18n'
 
+/** Priorities a stored task is allowed to carry. */
+const PRIORITIES = ['low', 'medium', 'high'] as const
+
+/**
+ * Decides whether a value read back from storage is really a task.
+ *
+ * `JSON.parse` returns `any`, so without this every field is a lie the compiler cannot
+ * catch. An array of arbitrary objects would sail through and only blow up later, in
+ * `render()`, after the list has already been cleared on screen.
+ *
+ * Only the four fields the app actually renders are required. `createdAt` is not: it is
+ * displayed nowhere, and discarding somebody's task over a missing timestamp would turn
+ * a cosmetic gap into data loss. A missing one is filled in by {@link reviveTask}.
+ *
+ * @param value A single entry from the stored array.
+ * @returns True when the fields the app relies on are present and of the right type.
+ */
+function isStoredTask(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as Record<string, unknown>
+
+  return (
+    typeof candidate.id === 'number' &&
+    Number.isFinite(candidate.id) &&
+    typeof candidate.text === 'string' &&
+    typeof candidate.completed === 'boolean' &&
+    typeof candidate.priority === 'string' &&
+    (PRIORITIES as readonly string[]).includes(candidate.priority)
+  )
+}
+
+/**
+ * Turns a validated stored entry back into a real task.
+ *
+ * `JSON.stringify` writes a `Date` as a string and `JSON.parse` leaves it a string, so
+ * without this step `createdAt` is typed `Date` and holds a `string` — a lie that only
+ * surfaces on the second page load, never the first.
+ *
+ * An absent or unparseable `createdAt` becomes the current time rather than an
+ * `Invalid Date`, so no caller ever receives a `Date` that throws on use.
+ *
+ * @param stored A value already accepted by {@link isStoredTask}.
+ * @returns The task, with `createdAt` as a usable `Date`.
+ */
+function reviveTask(stored: ReturnType<typeof JSON.parse>): Task {
+  const createdAt = new Date(stored.createdAt)
+  return {
+    ...stored,
+    createdAt: Number.isNaN(createdAt.getTime()) ? new Date() : createdAt
+  }
+}
+
 /**
  * Owns the task list: its state, its persistence and its rendering.
  *
@@ -189,7 +241,11 @@ export class TaskManager {
     try {
       const parsed = JSON.parse(stored)
       if (!Array.isArray(parsed)) throw new TypeError('stored tasks is not an array')
-      this.tasks = parsed
+
+      // Checking the array is not enough: an array of anything at all would get through
+      // and only fail later, inside render(), after the list was already cleared on screen.
+      // Entries that are not tasks are dropped; valid ones beside them are kept.
+      this.tasks = parsed.filter(isStoredTask).map(reviveTask)
       this.nextId = Math.max(...this.tasks.map(t => t.id), 0) + 1
     } catch (error) {
       console.error('Could not read stored tasks, starting empty:', error)
@@ -201,10 +257,14 @@ export class TaskManager {
   /**
    * Returns the full task list, ignoring the active filter.
    *
-   * @returns The live array — callers must not mutate it.
+   * A copy, not the live array. Handing out the internal array let a caller mutate the
+   * list without going through {@link addTask} or {@link deleteTask}, so the change was
+   * never persisted and memory silently drifted from `localStorage`.
+   *
+   * @returns A shallow copy of the task list.
    */
   getTasks(): Task[] {
-    return this.tasks
+    return [...this.tasks]
   }
 
   /**

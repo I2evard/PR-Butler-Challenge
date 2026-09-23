@@ -65,8 +65,11 @@ function handleSubmit(e: Event): void {
   const input = document.getElementById('task-input') as HTMLInputElement
   const select = document.getElementById('priority-select') as HTMLSelectElement
 
-  if (input.value.trim()) {
-    taskManager.addTask(input.value, select.value as 'low' | 'medium' | 'high')
+  // Validate and store the same value: trimming only to test the input, then storing the
+  // untrimmed one, saved the user's stray spaces into the task for good.
+  const text = input.value.trim()
+  if (text) {
+    taskManager.addTask(text, select.value as 'low' | 'medium' | 'high')
     input.value = ''
   }
 }

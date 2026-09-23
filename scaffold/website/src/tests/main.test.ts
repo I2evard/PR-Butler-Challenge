@@ -114,9 +114,9 @@ describe('application bootstrap', () => {
       await bootApp()
 
       expect(document.querySelector('h1')?.textContent).toBe('My Task Manager')
-      expect(
-        document.querySelector<HTMLInputElement>('#task-input')?.placeholder
-      ).toBe('Enter task description')
+      expect(document.querySelector<HTMLInputElement>('#task-input')?.placeholder).toBe(
+        'Enter task description'
+      )
     })
 
     it('puts the tasks of a previous visit back on screen', async () => {
@@ -157,10 +157,7 @@ describe('application bootstrap', () => {
 
       await bootApp()
 
-      expect(consoleError).toHaveBeenCalledWith(
-        'Application failed to start:',
-        expect.any(Error)
-      )
+      expect(consoleError).toHaveBeenCalledWith('Application failed to start:', expect.any(Error))
     })
   })
 
@@ -295,8 +292,8 @@ describe('application bootstrap', () => {
     it('moves the active mark onto the button that was clicked', () => {
       document.querySelector<HTMLButtonElement>('[data-filter="active"]')?.click()
 
-      const marked = Array.from(document.querySelectorAll('.filter-btn.active')).map(
-        button => button.getAttribute('data-filter')
+      const marked = Array.from(document.querySelectorAll('.filter-btn.active')).map(button =>
+        button.getAttribute('data-filter')
       )
       expect(marked).toEqual(['active'])
     })
