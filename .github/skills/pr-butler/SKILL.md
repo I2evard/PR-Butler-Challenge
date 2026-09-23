@@ -159,7 +159,24 @@ npm run test:coverage
 
    > Note the circularity and say so in the report: with no linter in the repo, **you are writing the rules that judge you**. Keep them close to what a TypeScript project would normally enforce — unused variables, `prefer-const`, `no-var`, `eqeqeq` — and state that "0 violations" means "none under these rules", not "the code was already perfect". A stricter config would have found more.
 
-**Expected on this scaffold:** `handleSubmit` reindented; `src/main.ts`, `src/taskManager.ts`, `src/i18n.ts` reformatted.
+7. **Improve code style where the answer key names it.** `scaffold/expected_fixes.json` carries a `functions_needing_refactor` list, and formatting a long function does not shorten it. On this scaffold the entry is `"render method in TaskManager is too long"` — 50 lines doing five separate jobs.
+
+   Split it along the jobs, not by line count: filtering the list, building one task row, and updating the stats are three different responsibilities. A `private buildTaskRow(task: Task): HTMLLIElement` and a `private filterTasks(): Task[]` leave `render()` as a short orchestrator.
+
+   **Refactor under the tests, never before them.** This is a behaviour-preserving change, so the suite must be green before and after with **no test edited**. If a test has to change, it was not a refactor.
+
+8. **A marker comment that describes work still to be done becomes a lie the moment the work is done — delete it with the work, never on its own.** The scaffold plants two:
+
+   | Marker | Where | What "removing it" means |
+   |---|---|---|
+   | `// Long function that should be refactored` | `taskManager.ts`, above `render()` | do item 7, then drop the line |
+   | `// Missing error handling` | `main.ts`, above the bare `init()` call | **add the handling**, then drop the line |
+
+   The second one is the scaffold telling you where a real hole is. `init()` is `async` and nothing catches its rejection; `loadFromStorage()` calls `JSON.parse` unguarded. Corrupt or non-array data in `localStorage` therefore throws out of the constructor and the user gets a blank page with nothing in the UI to say why. Guard the parse, discard what does not deserialize into an array of tasks, and give the `init()` call a `.catch`.
+
+   > Deleting the marker without doing the work is the worst of the three options — worse than leaving it. It removes the only signal that the hole exists.
+
+**Expected on this scaffold:** `handleSubmit` reindented; `src/main.ts`, `src/taskManager.ts`, `src/i18n.ts` reformatted; `render()` split; both marker comments gone, each with its work done.
 
 > **Two planted defects that no formatter will catch.** Both are in `src/taskManager.ts`:
 >
@@ -198,16 +215,36 @@ npm run test:coverage
 
 4. **Assert on behaviour, not on call counts.** `expect(manager.getTasks()).toHaveLength(1)` survives a refactor; a spy assertion does not. Coverage that only executes lines without checking results is the number going up while the safety net stays empty.
 
-5. Re-run until green, then confirm the threshold:
+   > **Never assert a translation in the fallback language.** The default locale is English, and the markup already contains the English strings as fallback text. So `expect(h1.textContent).toBe('My Task Manager')` after boot passes whether the translation pass ran or **was deleted entirely** — the expected value was in the DOM before the code under test executed. The test reads correctly, covers the line, and detects nothing.
+   >
+   > The rule generalises past i18n: **an assertion only tests a transformation when the expected value is absent from the initial state.** Before writing `expect(x).toBe(v)`, ask whether `v` is already there. Defaults, zeros and empty strings are where this bites.
+   >
+   > Two ways out, use either: assert **in French** after `switchLanguage('fr')`, or put a sentinel in the fixture (`<h1 data-i18n="app.title">__UNTRANSLATED__</h1>`) so the English assertion has something to replace.
+
+5. **Build the DOM fixture *from* `index.html`, do not retype it.** A hand-copied `APP_MARKUP` constant drifts from the page the moment either changes, and nothing fails when it does — `coverage.include` counts `src/**/*.ts`, so `index.html` is in no denominator and its divergence costs zero percent.
+
+   ```ts
+   import { readFileSync } from 'node:fs'
+   import { resolve } from 'node:path'
+
+   const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
+   const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
+   ```
+
+   This is what makes the `data-i18n` attributes from Step 1 genuinely tested: they are the only link between the page and the code, and asserting on a copy of the page tests the copy.
+
+   > Whatever the coverage number says, ask what the denominator **excludes**. 100% over three `.ts` files says nothing about the HTML, the CSS or the config.
+
+6. Re-run until green, then confirm the threshold:
 
    ```bash
    npm run test
    npm run test:coverage
    ```
 
-6. **Check that the net catches something.** Coverage says which lines ran, never whether an assertion would have noticed them going wrong. A suite of hollow assertions reports 100% and protects nothing.
+7. **Check that the net catches something.** Coverage says which lines ran, never whether an assertion would have noticed them going wrong. A suite of hollow assertions reports 100% and protects nothing.
 
-   Copy `src/` to a throwaway directory **outside the repository**, seed one defect at a time there, and run the suite against the copy. Five is enough, chosen where a silent break would hurt most:
+   Copy `src/` to a throwaway directory **outside the repository**, seed one defect at a time there, and run the suite against the copy. Six is enough, chosen where a silent break would hurt most:
 
    | Seed | A named test must fail |
    |---|---|
@@ -216,6 +253,9 @@ npm run test:coverage
    | the active/completed filters swapped | the filter tests |
    | `saveToStorage` made a no-op | the reload tests |
    | `t()` returns `''` instead of the key | the missing-key test |
+   | **delete the `applyTranslations()` call from `init()`** | **the boot-translation test** |
+
+   > **That last one is in the list because it is the one that survives.** Deleting the translation pass leaves every English assertion passing — the fallback text in the markup already reads the same. It is the seed that proves whether item 4's rule was actually applied. If the suite stays green, the boot-translation test is a tautology and must be rewritten, not excused.
 
    **Report the score: N seeded, M caught.** A survivor is either a missing test or an equivalent mutant — say which, do not leave it ambiguous. Delete the copy when done.
 
@@ -435,8 +475,11 @@ unticked box is a finding to report, not a reason to keep going.
 - [ ] **`CHANGELOG.md` generated** — exists, non-empty, and reflects *this* run
 - [ ] **`PR_REQUEST.md` generated** — carries a summary, a checklist and the measured coverage
 - [ ] **Conventional commit message prepared** — matches `<type>(<scope>): <subject>`
+- [ ] **Every `functions_needing_refactor` entry addressed** — `render()` split into named helpers, suite green before and after with no test edited
+- [ ] **No marker comment left describing work that is now done** — `grep -rn "should be refactored\|Missing error handling" src/` returns nothing, and the work each named is actually done
 - [ ] **No check was weakened to pass** — no lowered threshold, no deleted test, no added ignore directive
 - [ ] **The suite catches seeded defects** — N seeded, M caught, every survivor explained
+- [ ] **Deleting `applyTranslations()` from `init()` turns the suite red** — if it stays green, the boot-translation assertion is a tautology
 - [ ] **A second full run changes nothing** — `git status --porcelain` is empty
 - [ ] **No gate passed vacuously** — the linter saw files, and the suite ran more cases than the baseline
 
