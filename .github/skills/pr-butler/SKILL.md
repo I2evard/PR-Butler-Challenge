@@ -118,11 +118,15 @@ npm run test:coverage
 2. Add the scripts to `package.json`:
 
    ```json
-   "format": "prettier --write \"src/**/*.{ts,css,json}\"",
-   "format:check": "prettier --check \"src/**/*.{ts,css,json}\"",
+   "format": "prettier --write \"index.html\" \"src/**/*.{ts,css,json}\"",
+   "format:check": "prettier --check \"index.html\" \"src/**/*.{ts,css,json}\"",
    "lint": "eslint src --max-warnings 0",
    "typecheck": "tsc --noEmit"
    ```
+
+   > **`index.html` is in the glob on purpose.** The brief says *all source files*, and Step 1 makes `index.html` the **most-modified file of the whole run** — 13 new attributes and 3 new wrapper elements. A glob of `src/**` leaves it covered by no gate at all: `format:check` never reads it, `eslint src` never reads it, and the coverage table cannot see it. The one file the run changes most would be the one nothing checks.
+   >
+   > It is not Prettier-clean in the scaffold as delivered, so adding it produces a real diff on the first run. That diff is the point, not a side effect.
 
    All four, not just the first two: Gate 4 calls `typecheck` and Gate 6 calls `format:check`. Add them here or those gates die on "missing script".
 
@@ -184,6 +188,14 @@ npm run test:coverage
 
    The second one is the scaffold telling you where a real hole is. `init()` is `async` and nothing catches its rejection; `loadFromStorage()` calls `JSON.parse` unguarded. Corrupt or non-array data in `localStorage` therefore throws out of the constructor and the user gets a blank page with nothing in the UI to say why. Guard the parse, discard what does not deserialize into an array of tasks, and give the `init()` call a `.catch`.
 
+   > **Two ways this repair goes wrong, and both look finished.**
+   >
+   > **A type guard that checks types is not a validator.** The field that matters here is `id`: it is the key every destructive action is routed through. `deleteTask` is `filter(t => t.id !== id)` and `toggleTask` is `find(...)`, so **two stored tasks sharing an id mean one click deletes both** and a checkbox toggles the wrong row. And `nextId = Math.max(...ids) + 1` saturates: one task stored with `id: 1e308` — or `Number.MAX_SAFE_INTEGER` — makes `nextId++` stop incrementing, so every task the user creates afterwards gets the *same* id and the collision arrives on its own. Validate `id` as a **safe positive integer**, drop duplicates as you restore, and only then compute `nextId`. Do the same for every field the type declares — a guard written `value is Task` that skips `createdAt` tells the compiler a lie it will believe for the rest of the file's life.
+   >
+   > **A `.catch` that only logs converts a loud failure into a silent one.** Before the repair, a rejected boot threw where a developer could see it. After a bare `.catch(console.error)`, the static HTML still paints, no listener is wired, and the page looks *normal* while every click does nothing. That is worse. The catch must leave a visible trace **in the UI** — a message in the task list saying the saved tasks could not be read — not only in a console nobody has open.
+   >
+   > The rule behind both: **a repair that makes a failure invisible is not a repair.** Ask what the user sees when the new code path fires, and if the answer is "the same thing as success", the handler is wrong.
+
    > Deleting the marker without doing the work is the worst of the three options — worse than leaving it. It removes the only signal that the hole exists.
 
 **Expected on this scaffold:** `handleSubmit` reindented; `src/main.ts`, `src/taskManager.ts`, `src/i18n.ts` reformatted; `render()` split; both marker comments gone, each with its work done.
@@ -235,15 +247,24 @@ npm run test:coverage
 
 5. **Build the DOM fixture *from* `index.html`, do not retype it.** A hand-copied `APP_MARKUP` constant drifts from the page the moment either changes, and nothing fails when it does — `coverage.include` counts `src/**/*.ts`, so `index.html` is in no denominator and its divergence costs zero percent.
 
+   **Put it in one shared module, not in each test file.** Write `src/tests/fixture.ts` once and import it everywhere:
+
    ```ts
+   // src/tests/fixture.ts
    import { readFileSync } from 'node:fs'
    import { resolve } from 'node:path'
 
    const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
-   const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
+
+   /** The page's `<body>` content, read from `index.html` rather than retyped. */
+   export const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
    ```
 
+   > A snippet copied into three test files is three copies to update when the page moves, and the copies drift apart silently — which is the very failure this item exists to prevent, reintroduced one level up. If you find yourself pasting the same two lines a third time, it was a module.
+
    This is what makes the `data-i18n` attributes from Step 1 genuinely tested: they are the only link between the page and the code, and asserting on a copy of the page tests the copy.
+
+   **Write test names and identifiers in the language the repository is written in.** Read the existing source, README and comments and match them. A suite whose `it(...)` titles are in another language than the code is unreadable to the next maintainer and to any tool that reads test names as documentation — and on this scaffold, everything is in English. This is worth stating because the agent running this Skill may be prompted in a different language than the repository is written in: **the repository wins, not the prompt.**
 
    > Whatever the coverage number says, ask what the denominator **excludes**. 100% over three `.ts` files says nothing about the HTML, the CSS or the config.
 
@@ -341,7 +362,13 @@ The four deliverables of Gate 7: `scaffold/website/README.md`, `CHANGELOG.md`, `
 
 > ⚠️ **A gate can pass because it checked nothing.** `npm run lint` over a glob that matches no file exits 0 and reports clean. A suite that collects zero test files exits 0. An empty pass is indistinguishable from a real one in the exit code, and it is the failure mode a quality gate exists to prevent — so confirm the work was seen, not only that nothing complained:
 >
-> - the linter names the files it examined, and the count is greater than zero
+> - the linter names the files it examined, and the count is greater than zero. `npm run lint` prints **nothing** on success, so it cannot answer this — ask for the file list explicitly:
+>
+>   ```bash
+>   npx eslint src -f json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);console.log(r.length+' files, '+r.reduce((n,f)=>n+f.errorCount,0)+' errors')})"
+>   ```
+>
+>   Do not write a file count into the report that no command produced.
 > - the test run reports more cases than the baseline, not merely "no failures"
 > - coverage lists every source file **that carries runtime statements**, not a subset of them — a type-only file like `src/types.ts` is erased at compile time and correctly absent from the table, so "9 files match the include glob but 3 appear" is not by itself a finding
 
@@ -503,6 +530,10 @@ unticked box is a finding to report, not a reason to keep going.
 - [ ] **Conventional commit message prepared** — matches `<type>(<scope>): <subject>`
 - [ ] **Every `functions_needing_refactor` entry addressed** — `render()` split into named helpers, suite green before and after with no test edited
 - [ ] **No marker comment left describing work that is now done** — `grep -rn "should be refactored\|Missing error handling" src/` returns nothing, and the work each named is actually done
+- [ ] **The storage guard validates `id`, not just its type** — duplicate ids dropped, `id` a safe positive integer, `nextId` computed after the filter; a stored `id: 1e308` does not break task creation
+- [ ] **Every new failure path is visible to the user** — the boot `.catch` puts a message on screen, not only in the console
+- [ ] **`index.html` passes the formatter** — it is in the `format:check` glob, and it is the file this run changes most
+- [ ] **Tests read in the repository's language** — `it(...)` titles and identifiers match the language of the source, whatever language the run was prompted in
 - [ ] **No check was weakened to pass** — no lowered threshold, no deleted test, no added ignore directive
 - [ ] **The suite catches seeded defects** — N seeded, M caught, every survivor explained
 - [ ] **Deleting `applyTranslations()` from `init()` turns the suite red** — if it stays green, the boot-translation assertion is a tautology
