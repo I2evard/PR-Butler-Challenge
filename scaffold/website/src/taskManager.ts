@@ -168,8 +168,9 @@ export class TaskManager {
    * Restores the task set from `localStorage` during construction.
    *
    * Also advances the id counter past the highest restored id so a new task cannot
-   * collide with one that came back from storage. Absent or unparseable data leaves
-   * the manager empty.
+   * collide with one that came back from storage. Absent data leaves the manager
+   * empty. Malformed data does **not**: the parse is unguarded, so corrupt JSON
+   * throws out of the constructor.
    */
   private loadFromStorage() {
     // TODO: migrate to API backend - endpoint: https://api.internal/tasks

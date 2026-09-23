@@ -26,9 +26,9 @@ These hold for every step. They exist because an unattended agent fails in ways 
 | **Fix the root cause, not the symptom.** | Formatting a file that does not compile wastes the run. |
 | **Repair what the six steps name, plus any defect that makes one of them a lie.** Everything else you find gets written down, not patched. | The scope has to end somewhere, and "use your judgement" leaves the line in a different place on every run. A security hole in the code you are formatting makes Step 2 a lie; a latent bug elsewhere does not. |
 | **If a guard in the repository refuses you an action the workflow needs, delegate it — never route around it.** Test files in particular may be reserved for a dedicated test agent. | An automation that defeats the repository's own controls to finish is worse than one that stops and says what it needs. Report the delegation in the Report Card. |
+| **Report honestly.** If a step was skipped or partially done, say so. | The evaluator verifies the Report Card against actual file contents. |
 
 **Measure the baseline once, at the preflight, and report that one.** Steps 1 and 2 change the code, so a second measurement taken later will differ — the cleanup alone moves coverage by several points. The Report Card's `X% → Y%` means *preflight → final*. Mention any intermediate figure in `PR_REQUEST.md` if it is interesting, never in place of the baseline.
-| **Report honestly.** If a step was skipped or partially done, say so. | The evaluator verifies the Report Card against actual file contents. |
 
 ### Preflight
 
@@ -421,27 +421,24 @@ Scope: Step 1 only — Steps 2 through 6 not run.
 
 ## Success Criteria
 
-The agent verifies each box by running the command beside it, not by recalling what it did.
+Tick each box by **running the check named beside it**, never by recalling what you did. An
+unticked box is a finding to report, not a reason to keep going.
 
-| # | Criterion | How it is verified |
-|---|---|---|
-| 1 | All 14 French translation keys present in `fr.json` | Step 1 validation command exits 0 |
-| 2 | Code formatted consistently | `npm run format` leaves no further changes |
-| 3 | No lint violations | `npm run lint` → 0 errors |
-| 4 | Test coverage ≥ 80% | `npm run test:coverage` statements column |
-| 5 | All tests pass | `npm run test` exit code 0 |
-| 6 | No type errors | `npx tsc --noEmit` exit code 0 |
-| 7 | TSDoc on every exported function and public method | the 9 the brief names, **and** the rest of the public surface — `getTasks`, `getCompletedCount`, and everything `i18n.ts` exports. The 9 are the floor, not the list |
-| 8 | `README.md` has Features, Testing, Contributing | all three headings present |
-| 9 | `CHANGELOG.md` generated | exists, non-empty, reflects this run |
-| 10 | `PR_REQUEST.md` generated with summary and checklist | exists, carries measured coverage |
-| 11 | Conventional commit message prepared | matches `<type>(<scope>): <subject>` |
-| 12 | No check was weakened to pass | no lowered threshold, no deleted test, no added ignore directive |
-| 13 | The suite catches seeded defects | N seeded, M caught, survivors explained |
-| 14 | A second full run changes nothing | `git status --porcelain` is empty |
-| 15 | No gate passed vacuously | the linter saw files, the suite ran more cases than the baseline |
-
-**The table above is the authoritative list.** It supersedes the shorter checklist this template shipped with, which covered the same ground in fewer rows and vaguer words.
+- [ ] **All 14 French translation keys present in `fr.json`** — the Step 1 validation command exits 0
+- [ ] **Code formatted consistently** — `npm run format:check` reports no file would be rewritten
+- [ ] **No lint violations** — `npm run lint` → 0 errors
+- [ ] **Test coverage ≥ 80% statements** — read it off `npm run test:coverage`, do not estimate
+- [ ] **All tests pass** — `npm run test` exit code 0
+- [ ] **No type errors** — `npm run typecheck` exit code 0
+- [ ] **TSDoc on every exported function and public method** — the 9 the brief names, **and** the rest of the public surface: `getTasks`, `getCompletedCount`, and everything `i18n.ts` exports. The 9 are the floor, not the list
+- [ ] **`README.md` has Features, Testing and Contributing** — all three headings present
+- [ ] **`CHANGELOG.md` generated** — exists, non-empty, and reflects *this* run
+- [ ] **`PR_REQUEST.md` generated** — carries a summary, a checklist and the measured coverage
+- [ ] **Conventional commit message prepared** — matches `<type>(<scope>): <subject>`
+- [ ] **No check was weakened to pass** — no lowered threshold, no deleted test, no added ignore directive
+- [ ] **The suite catches seeded defects** — N seeded, M caught, every survivor explained
+- [ ] **A second full run changes nothing** — `git status --porcelain` is empty
+- [ ] **No gate passed vacuously** — the linter saw files, and the suite ran more cases than the baseline
 
 ---
 
