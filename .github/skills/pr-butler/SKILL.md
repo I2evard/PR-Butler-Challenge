@@ -13,48 +13,205 @@ The PR Butler automates the complete pre-commit checklist for web projects, ensu
 - User asks to "fix the scaffold" or "make this PR-ready"
 - Before any pull request submission
 
+### Operating Rules
+
+These hold for every step. They exist because an unattended agent fails in ways a human would not.
+
+| Rule | Why |
+|---|---|
+| **Work from `scaffold/website/`.** Every path below is relative to it. | Running npm from the repo root finds no `package.json` and reports a confusing failure. |
+| **Measure before and after.** Record coverage, test count and lint count at the start; compare at the end. | The Report Card asks for `X% → Y%`. A number you did not measure is a number you invented. |
+| **Never weaken a check to make it pass.** Do not lower the coverage threshold, delete a failing test, or add an ignore comment to silence a linter. | This is the one failure mode that looks like success. If a gate cannot be met, stop and report — that is a passing outcome for the Butler, not a failure. |
+| **Stop at the first failing gate in Step 5.** Report what failed and why; do not continue to Step 6. | A PR prepared on top of a failed gate is worse than no PR. |
+| **Fix the root cause, not the symptom.** | Formatting a file that does not compile wastes the run. |
+| **Report honestly.** If a step was skipped or partially done, say so. | The evaluator verifies the Report Card against actual file contents. |
+
+### Preflight
+
+Run once, before Step 1. It costs seconds and prevents every downstream step from failing for the same reason.
+
+```bash
+cd scaffold/website
+node --version          # 18+ required
+npm install             # install declared dependencies
+npm run test            # confirm the suite actually starts
+```
+
+**If `npm run test` reports `MISSING DEPENDENCY 'jsdom'`:** `vitest.config.ts` declares `environment: 'jsdom'`, but `jsdom` is absent from `package.json`. The suite cannot run at all — baseline coverage is not low, it is undefined. Install it before doing anything else:
+
+```bash
+npm install --save-dev jsdom
+```
+
+Record the baseline once the suite runs:
+
+```bash
+npm run test:coverage
+```
+
 ---
 
 ## Instructions
 
-<!-- 
-  YOUR TASK: Fill in the detailed step-by-step instructions for each of the 6 steps below.
-  Each step should tell the AI agent exactly what to do, what files to touch, 
-  and what output to produce. Be specific — vague instructions produce vague results.
--->
-
 ### Step 1: Translation Detection & Fix
 
-<!-- Describe how to detect missing French translations and generate them -->
+**Goal:** `src/translations/fr.json` carries every key that `en.json` carries, with real French values.
+
+1. Read both files and compare their key sets:
+
+   ```bash
+   node -e "const en=require('./src/translations/en.json'),fr=require('./src/translations/fr.json');const m=Object.keys(en).filter(k=>!(k in fr));console.log(m.length+' missing:',m.join(', '))"
+   ```
+
+2. For each missing key, write a French value using the English value **and the key name** as context. The key names carry the UI role — `button.add` is a button label, `stats.total` is a counter label, `footer.text` is a caption. Translate for that role, not word by word.
+
+3. **Keep the key order identical to `en.json`.** A diff that only adds lines is reviewable; a reordered file is not.
+
+4. Preserve the existing two entries — do not regenerate them.
+
+5. Validate:
+
+   ```bash
+   node -e "const en=require('./src/translations/en.json'),fr=require('./src/translations/fr.json');const m=Object.keys(en).filter(k=>!(k in fr));const e=Object.keys(fr).filter(k=>!(k in en));if(m.length||e.length)throw new Error('missing: '+m+' | extra: '+e);console.log('OK — '+Object.keys(fr).length+' keys, both files aligned')"
+   ```
+
+   Both directions matter: a key in `fr.json` that is absent from `en.json` is a typo, not a translation.
+
+**Expected on this scaffold:** 2 keys present, 12 missing, 14 after the fix.
+
+> **Do not stop at the JSON.** `switchLanguage()` in `src/main.ts` changes the active button and nothing else — the comment on the last line of that function admits it. Translated strings never reach the DOM, so a fully populated `fr.json` still renders English. Wire `t()` from `src/i18n.ts` into the elements that carry translatable text, or state plainly in the Report Card that the data is fixed and the rendering is not. Silently shipping unreachable translations is the failure this step exists to prevent.
 
 ### Step 2: Code Cleanup
 
-<!-- Describe how to format code and fix lint violations -->
+**Goal:** consistent formatting, no lint errors, no dead code.
+
+1. **Check what exists first.** This scaffold ships with neither a formatter nor a linter, and no `lint` script. `npm run lint` will fail with "missing script" — that is not a lint failure, it is an absent toolchain. Install one:
+
+   ```bash
+   npm install --save-dev prettier eslint @eslint/js typescript-eslint
+   ```
+
+2. Add the scripts to `package.json`:
+
+   ```json
+   "format": "prettier --write \"src/**/*.{ts,css,json}\"",
+   "lint": "eslint src --max-warnings 0"
+   ```
+
+3. Add a minimal `eslint.config.js` and a `.prettierrc` that match the code already in the repo — no semicolons, single quotes, 2-space indent. **Match the existing style; do not impose a new one.** A formatter that rewrites every untouched line buries the real changes in the diff.
+
+4. Run them:
+
+   ```bash
+   npm run format
+   npm run lint
+   ```
+
+5. **`handleSubmit()` in `src/main.ts` is the worst offender** — zero indentation, no spaces around `=`, `(`, or `|`. The formatter fixes it. Confirm it did.
+
+6. Remove unused variables and dead code the linter reports. If the answer key names a symbol you cannot find in the source, **do not invent one to match** — report it as not present.
+
+**Expected on this scaffold:** `handleSubmit` reindented; `src/main.ts`, `src/taskManager.ts`, `src/i18n.ts` reformatted.
+
+> **Two planted defects that no formatter will catch.** Both are in `src/taskManager.ts`:
+>
+> - **`text.innerHTML = task.text`** in `render()` injects user input straight into the DOM — a stored XSS hole. Use `textContent`. There is no case in this app where task text should be parsed as HTML.
+> - **A credential in a comment** in `loadFromStorage()`: a `temp auth:` token beside an internal endpoint. Remove it. A secret in a comment is a secret in the repository, and the git history keeps it after the line is deleted.
+>
+> Neither appears in `scaffold/expected_fixes.json`. A cleanup pass that only chases the listed items misses both.
 
 ### Step 3: Test Automation
 
-<!-- Describe how to run tests, generate missing test cases, achieve >80% coverage -->
+**Goal:** every public behaviour covered, suite green, coverage above 80%.
+
+1. Establish the baseline — you cannot report `X% → Y%` without an X:
+
+   ```bash
+   npm run test:coverage
+   ```
+
+2. Read the coverage table's **Uncovered Line #s** column. It names what to write, which is more reliable than guessing from function names.
+
+3. Write tests for the uncovered behaviour. On this scaffold: `toggleTask`, `deleteTask`, `setFilter`, `render`, `saveToStorage`, `loadFromStorage`.
+
+   **Three of these need care:**
+
+   | Function | The problem | What to do |
+   |---|---|---|
+   | `render` | Touches the DOM. Returns early when `#tasks` is absent, so a naive test covers the guard clause and nothing else. | Build the DOM the function expects (`document.body.innerHTML = '<ul id="tasks"></ul><span id="total-count"></span><span id="completed-count"></span>'`), then assert on the rendered nodes. |
+   | `saveToStorage` · `loadFromStorage` | Both are `private`. | Exercise them **through the public API** — `addTask()` writes, a fresh `new TaskManager()` reads back. Testing through the public surface is the point, not a workaround. Do not widen their visibility to make them testable. |
+   | Anything using `localStorage` | State leaks between tests and makes failures order-dependent. | `localStorage.clear()` in `beforeEach`, as the existing suite already does. |
+
+4. **Assert on behaviour, not on call counts.** `expect(manager.getTasks()).toHaveLength(1)` survives a refactor; a spy assertion does not. Coverage that only executes lines without checking results is the number going up while the safety net stays empty.
+
+5. Re-run until green, then confirm the threshold:
+
+   ```bash
+   npm run test
+   npm run test:coverage
+   ```
+
+**Expected on this scaffold:** baseline ≈26% statements over 2 tests; target ≥80%.
 
 ### Step 4: Documentation Updates
 
-<!-- Describe how to add docstrings, update README.md, generate CHANGELOG.md and PR_REQUEST.md -->
+**Goal:** every public function documented, and the three generated documents written.
+
+| Target | What to write |
+|---|---|
+| **Docstrings** | TSDoc on all 9 undocumented public functions: `addTask`, `toggleTask`, `deleteTask`, `setFilter`, `render` in `src/taskManager.ts`; `init`, `setupEventListeners`, `handleSubmit`, `switchLanguage` in `src/main.ts`. Each gets a one-line summary, `@param` per argument with its meaning, and `@returns` when it returns something. **Say what the function is for, not what its name already says** — `/** Adds a task. */` on `addTask` is noise. |
+| **`README.md`** (in `scaffold/website/`) | Add **Features**, **Testing**, **Contributing**. Testing carries the real commands (`npm run test`, `npm run test:coverage`) and the coverage threshold. Contributing states the quality gates a contributor must pass. |
+| **`CHANGELOG.md`** | Keep a Changelog format, grouped under `Added` / `Changed` / `Fixed` / `Security`. One line per real change, each naming the file it touched. The XSS fix and the removed credential go under **`Security`** — that is the heading a reviewer scans first. |
+| **`PR_REQUEST.md`** | Conventional title, a summary a reviewer can act on, a checklist mirroring the success criteria, and the before/after coverage numbers. |
+
+Write `CHANGELOG.md` and `PR_REQUEST.md` at the **repository root**, beside `README.md` and `tech_challenge.md` — they describe the whole submission, not the scaffold alone.
+
+> Generate these from what actually changed in this run, not from a template. A changelog listing changes that were not made is worse than no changelog.
 
 ### Step 5: Quality Gates
 
-<!-- Describe the quality gates to enforce before proceeding -->
+**Goal:** refuse to proceed unless the work is genuinely ship-ready.
+
+Run in this order and stop at the first failure:
+
+| # | Gate | Command | Passes when |
+|---|---|---|---|
+| 1 | Suite green | `npm run test` | Exit code 0, zero failures |
+| 2 | Coverage | `npm run test:coverage` | Statements ≥ 80% |
+| 3 | Lint | `npm run lint` | Zero errors |
+| 4 | Types | `npx tsc --noEmit` | Zero errors |
+| 5 | Translations | the Step 1 validation command | Both files aligned |
+| 6 | Deliverables | check each file exists and is non-empty | All present |
+
+**On failure:** report which gate failed, its exact output, and what would fix it. **Then stop — do not run Step 6.** Do not lower a threshold, skip a test, or add an ignore directive to get past a gate. A Butler that reports "coverage 74%, gate failed, here is the uncovered list" has done its job correctly.
+
+Gate 4 is not in the brief and is worth the two seconds: `vitest` transpiles without type-checking, so a type error passes the whole suite and breaks the build.
 
 ### Step 6: PR Preparation
 
-<!-- Describe how to generate the conventional commit message and finalize deliverables -->
+**Goal:** a commit message and a PR description that a reviewer can act on without opening the diff.
+
+1. Generate a Conventional Commits message from what actually changed:
+
+   ```
+   <type>(<scope>): <subject in the imperative, under 72 chars>
+
+   <body: what changed and why, wrapped at 72>
+
+   <footer: BREAKING CHANGE / refs>
+   ```
+
+   Pick the type from the dominant change — `feat` for new behaviour, `fix` for a defect, `chore` for tooling, `docs` for documentation only. A run that fixes a security hole and adds tests is a `fix`, and the XSS repair belongs in the body.
+
+2. Finalize `PR_REQUEST.md` with the measured metrics — coverage before and after, test count before and after, files touched.
+
+3. Confirm every Step 4 deliverable exists and is non-empty.
+
+4. **Do not commit, push, or open the PR.** The Butler prepares; the human decides what ships.
 
 ---
 
 ## Examples
-
-<!-- 
-  YOUR TASK: Provide at least 2 example scenarios showing input and expected output.
-  Example: "Make the scaffold PR-ready" → what the agent reports at each step.
--->
 
 ### Example 1: Full PR Preparation
 
@@ -63,7 +220,62 @@ The PR Butler automates the complete pre-commit checklist for web projects, ensu
 **Expected output:**
 
 ```
-<!-- Fill in the expected step-by-step output -->
+PREFLIGHT
+  node v24.19.0 · npm install OK
+  npm run test → MISSING DEPENDENCY 'jsdom'
+  → vitest.config.ts declares environment 'jsdom', package.json does not.
+  → npm install --save-dev jsdom
+  npm run test → 2 passed
+  Baseline: 26.02% statements, 2 tests
+
+STEP 1 — Translations
+  en.json 14 keys · fr.json 2 keys · 12 missing
+  Added: task.placeholder, priority.low, priority.medium, priority.high,
+         button.add, filter.all, filter.active, filter.completed,
+         stats.total, stats.completed, button.delete, footer.text
+  Validation: OK — 14 keys, both files aligned
+  ⚠ switchLanguage() does not apply translations to the DOM — wired t() into
+    the 6 translatable elements in index.html
+  PASS
+
+STEP 2 — Code Cleanup
+  No formatter or linter present → installed prettier, eslint, typescript-eslint
+  Added scripts: format, lint · configs matched to existing style
+  4 files formatted — handleSubmit() in main.ts reindented
+  eslint: 0 errors
+  expected_fixes.json names 'unusedVariable' — not present in source, not invented
+  ⚠ SECURITY — 2 defects not in the answer key:
+    taskManager.ts:74  innerHTML = task.text → textContent (stored XSS)
+    taskManager.ts:113 credential in comment → removed
+  PASS
+
+STEP 3 — Tests
+  Uncovered: toggleTask, deleteTask, setFilter, render, saveToStorage, loadFromStorage
+  +14 cases · render tested against a built DOM · storage through the public API
+  npm run test → 16 passed
+  Coverage: 26.02% → 87.4% statements
+  PASS
+
+STEP 4 — Documentation
+  TSDoc on 9 public functions (5 taskManager.ts, 4 main.ts)
+  README.md + Features, Testing, Contributing
+  CHANGELOG.md — Added/Changed/Fixed/Security
+  PR_REQUEST.md — title, summary, checklist, coverage
+  PASS
+
+STEP 5 — Quality Gates
+  tests green        ✓
+  coverage ≥ 80%     ✓ 87.4%
+  lint clean         ✓ 0 errors
+  tsc --noEmit       ✓ 0 errors
+  translations       ✓ 14/14
+  deliverables       ✓ 4/4
+  PASS
+
+STEP 6 — PR Preparation
+  fix(scaffold): repair XSS, complete French locale, raise coverage to 87%
+  PR_REQUEST.md finalized · not committed — awaiting your review
+  PASS
 ```
 
 ### Example 2: Translation-Only Run
@@ -73,17 +285,52 @@ The PR Butler automates the complete pre-commit checklist for web projects, ensu
 **Expected output:**
 
 ```
-<!-- Fill in the expected output -->
+Scope: Step 1 only — Steps 2 through 6 not run.
+
+  en.json 14 keys · fr.json 2 keys · 12 missing
+  Added, in en.json key order:
+    task.placeholder    → Saisir la description de la tâche
+    priority.low        → Priorité faible
+    priority.medium     → Priorité moyenne
+    priority.high       → Priorité élevée
+    button.add          → Ajouter la tâche
+    filter.all          → Toutes les tâches
+    filter.active       → Actives
+    filter.completed    → Terminées
+    stats.total         → Total des tâches
+    stats.completed     → Terminées
+    button.delete       → Supprimer
+    footer.text         → Conçu avec TypeScript
+  Validation: OK — 14 keys, both files aligned
+
+  ⚠ Data fixed, rendering not. switchLanguage() in main.ts updates the active
+    button and returns; t() is never called on any element. The app still
+    renders English with a complete fr.json. Wiring it is out of scope for a
+    translation-only run — say the word and I will.
+
+  Quality gates not run (single-step scope). Nothing committed.
 ```
 
 ---
 
 ## Success Criteria
 
-<!-- 
-  YOUR TASK: Define the checklist the agent uses to verify everything passed.
-  At minimum, cover all 6 steps.
--->
+The agent verifies each box by running the command beside it, not by recalling what it did.
+
+| # | Criterion | How it is verified |
+|---|---|---|
+| 1 | All 14 French translation keys present in `fr.json` | Step 1 validation command exits 0 |
+| 2 | Code formatted consistently | `npm run format` leaves no further changes |
+| 3 | No lint violations | `npm run lint` → 0 errors |
+| 4 | Test coverage ≥ 80% | `npm run test:coverage` statements column |
+| 5 | All tests pass | `npm run test` exit code 0 |
+| 6 | No type errors | `npx tsc --noEmit` exit code 0 |
+| 7 | TSDoc on all 9 public functions | each named function carries a docstring |
+| 8 | `README.md` has Features, Testing, Contributing | all three headings present |
+| 9 | `CHANGELOG.md` generated | exists, non-empty, reflects this run |
+| 10 | `PR_REQUEST.md` generated with summary and checklist | exists, carries measured coverage |
+| 11 | Conventional commit message prepared | matches `<type>(<scope>): <subject>` |
+| 12 | No check was weakened to pass | no lowered threshold, no deleted test, no added ignore directive |
 
 - [ ] All 14 French translation keys present in `fr.json`
 - [ ] Code formatted consistently
