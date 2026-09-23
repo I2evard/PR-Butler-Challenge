@@ -89,14 +89,17 @@ npm run test:coverage
 >
 > 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the task input. **12 of the first, 1 of the second, 13 attributes in all**: the page title heading, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer text — and the input's placeholder.
 >
->    **Two of those cannot take the attribute as the markup stands**, because `textContent` would destroy what sits beside the label:
+>    **Three of those cannot take the attribute as the markup stands**, because `textContent` would destroy what sits beside the label:
 >
 >    ```html
 >    <p><span data-i18n="stats.total">Total tasks</span>: <span id="total-count">0</span></p>
+>    <p><span data-i18n="stats.completed">Completed</span>: <span id="completed-count">0</span></p>
 >    <p><span data-i18n="footer.text">Built with TypeScript</span> • 2026</p>
 >    ```
 >
->    Wrap the label in its own `<span>` and tag that. Writing the key onto the parent `<p>` wipes the counter and the year.
+>    Wrap the label in its own `<span>` and tag that. Writing the key onto the parent `<p>` wipes the two counters and the year.
+>
+>    **Do not work from this list — derive it.** It is here to show the shape of the fix, not to be trusted as complete. The test is mechanical: an element can carry `data-i18n` only if its text is *the whole* of its content. Anything with a sibling node — a counter, a separator, a date — needs the wrapper. Walk the page and apply that test to every element you are about to tag; the third case above was missing from an earlier version of this file, and a run that trusted the list would have wiped the completed counter on every language switch.
 > 2. Add `applyTranslations(root = document)` to `src/i18n.ts`: walk both attribute sets and rewrite `textContent` and `placeholder`.
 > 3. Call it from `init()` and from `switchLanguage()`, and repaint the task list after — the Delete button is built in `taskManager.ts` and must use `t('button.delete')`.
 >
@@ -127,7 +130,8 @@ npm run test:coverage
 
    ```json
    { "semi": false, "singleQuote": true, "tabWidth": 2, "printWidth": 100,
-     "trailingComma": "none", "arrowParens": "avoid", "endOfLine": "crlf" }
+     "trailingComma": "none", "arrowParens": "avoid", "endOfLine": "crlf",
+     "overrides": [{ "files": "*.css", "options": { "tabWidth": 4 } }] }
    ```
 
    > **`endOfLine` is the setting that decides whether this step helps or ruins the diff, and its default is wrong here.** Prettier defaults to `"lf"`. This scaffold is checked out with **CRLF**, so the default rewrites *every line of every file* — including files whose content does not change by a single character. The diff then shows hundreds of modified lines and hides the four that matter.
@@ -138,13 +142,15 @@ npm run test:coverage
    > node -e "const b=require('fs').readFileSync('src/types.ts');console.log(b.includes('\r\n')?'crlf':'lf')"
    > ```
    >
-   > **Verify after formatting** — a file you did not intend to touch must show no change:
+   > **The `overrides` entry is not decoration.** `styles.css` is indented with four spaces. Without the override, `tabWidth: 2` rewrites **244 lines of a file whose content changes by nothing** — the exact harm this paragraph warns about, in the file the paragraph does not check. Measure whatever you are about to format, per extension, and override where the repo disagrees with you.
+   >
+   > **Verify after formatting, at the byte level, on a file per extension** — one you did not intend to touch must be identical:
    >
    > ```bash
-   > git diff --numstat src/types.ts   # expect no output, or 0 0
+   > node -e "const fs=require('fs');for(const f of ['src/types.ts','src/styles.css','src/translations/en.json']){const b=fs.readFileSync(f);console.log(f, b.includes('\r\n')?'crlf':'lf', b.length)}"
    > ```
    >
-   > A non-zero count on an untouched file means the line endings flipped. Fix `endOfLine` and restore before going further.
+   > Compare the output to the same command run before formatting. **Do not use `git diff` for this check.** With `core.autocrlf=true` — the Windows default — git normalises line endings in the index, so `git diff --numstat` reports `0 0` even when the working tree flipped from CRLF to LF. The check would report clean for the one failure it exists to detect. A changed byte length on an untouched file means the line endings moved: fix `endOfLine` and restore before going further.
 
 4. Run them:
 
@@ -165,6 +171,10 @@ npm run test:coverage
 
    **Refactor under the tests, never before them.** This is a behaviour-preserving change, so the suite must be green before and after with **no test edited**. If a test has to change, it was not a refactor.
 
+   > **This item is the one place where the step numbering is a reading order, not an execution order.** The baseline suite is two tests covering almost nothing, so "green before and after" means nothing against it. Do Step 3 first, then come back here: split `render()` once the suite actually covers it, and re-run to prove the split changed no behaviour. The rest of Step 2 — formatter, linter, the two security defects — runs in place, before Step 3.
+   >
+   > A repository with a test-first guard will force this order on you anyway, by refusing production writes until a red is journalled. Better to arrive there on purpose.
+
 8. **A marker comment that describes work still to be done becomes a lie the moment the work is done — delete it with the work, never on its own.** The scaffold plants two:
 
    | Marker | Where | What "removing it" means |
@@ -181,7 +191,9 @@ npm run test:coverage
 > **Two planted defects that no formatter will catch.** Both are in `src/taskManager.ts`:
 >
 > - **`text.innerHTML = task.text`** in `render()` injects user input straight into the DOM — a stored XSS hole. Use `textContent`. There is no case in this app where task text should be parsed as HTML.
-> - **A credential in a comment** in `loadFromStorage()`: a `temp auth:` token beside an internal endpoint. Remove it. A secret in a comment is a secret in the repository, and the git history keeps it after the line is deleted.
+> - **A credential in a comment** in `loadFromStorage()`: a `temp auth:` token, sitting directly under a `// TODO: migrate to API backend` line that names an internal hostname. A secret in a comment is a secret in the repository, and the git history keeps it after the line is deleted.
+>
+>   **Remove the token line entirely, and the hostname from the TODO; keep the TODO itself.** The three are not the same thing: the token is a credential, the hostname is internal infrastructure that does not belong in a public fork, and the intention to migrate is legitimate engineering information the next reader needs. Deleting all three loses real context; deleting only the token leaves the internal host in a repository about to be forked.
 >
 > Neither appears in `scaffold/expected_fixes.json`. A cleanup pass that only chases the listed items misses both.
 
@@ -253,9 +265,11 @@ npm run test:coverage
    | the active/completed filters swapped | the filter tests |
    | `saveToStorage` made a no-op | the reload tests |
    | `t()` returns `''` instead of the key | the missing-key test |
-   | **delete the `applyTranslations()` call from `init()`** | **the boot-translation test** |
+   | **delete the `applyTranslations()` call from `init()` — that one only** | **the boot-translation test** |
 
    > **That last one is in the list because it is the one that survives.** Deleting the translation pass leaves every English assertion passing — the fallback text in the markup already reads the same. It is the seed that proves whether item 4's rule was actually applied. If the suite stays green, the boot-translation test is a tautology and must be rewritten, not excused.
+   >
+   > **Anchor the seed so it matches once.** After Step 1 there are **two** `applyTranslations()` call sites — `init()` and `switchLanguage()` — so an unanchored replace hits both. That turns the suite red for the wrong reason: the language-switch tests fail, the boot test still passes, and you would score the mutant as caught while the hole is still open. Anchor on the surrounding line in `init()`, then confirm the failures that came back are the **boot** ones.
 
    **Report the score: N seeded, M caught.** A survivor is either a missing test or an equivalent mutant — say which, do not leave it ambiguous. Delete the copy when done.
 
@@ -314,19 +328,22 @@ The four deliverables of Gate 7: `scaffold/website/README.md`, `CHANGELOG.md`, `
 > git status --porcelain     # expect no output
 > ```
 >
-> **If this is not a git checkout**, that command fails and the gate is unrunnable as written — nothing else in this workflow assumes git, so do not assume it here either. Fall back to a content manifest taken before and after, honouring `.gitignore`:
+> **Check at the preflight whether that command can answer.** It reports the tree against `HEAD`, not against the state you started from, so it is only meaningful when the tree was already clean before Step 1. It is non-empty — and the gate unrunnable as written — whenever the repository is not a git checkout at all, **or the tree already carried changes, staged or unstaged, when the run began**. The second case is the common one and the easy one to miss: the output looks like a failure you caused.
+>
+> When it cannot answer, fall back to a content manifest taken before and after. **Run it from the repository root**, not from `scaffold/website/` — this is the second exception to the "every path is relative to `scaffold/website/`" rule, and `CHANGELOG.md` and `PR_REQUEST.md`, the two files most likely to churn, live at the root:
 >
 > ```bash
+> cd "$(git rev-parse --show-toplevel)"   # or the directory containing scaffold/
 > node -e "const{createHash}=require('crypto'),fs=require('fs'),p=require('path');const skip=new Set(['node_modules','dist','coverage','.git']);const h=createHash('sha256');(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:1)){if(skip.has(e.name))continue;const f=p.join(d,e.name);e.isDirectory()?w(f):h.update(f+fs.readFileSync(f))}})('.');console.log(h.digest('hex'))"
 > ```
 >
-> Same hash before and after means nothing moved. A second run that still changes files means something is churning — a formatter fighting the line endings, a test generator appending duplicates, a CHANGELOG rewriting its own entries. Each of those ships noise into a reviewer's diff.
+> Same hash before and after means nothing moved. Report which of the two checks you used and why — a gate verified by the fallback is a passing gate, a gate skipped because the primary check was noisy is not. A second run that still changes files means something is churning — a formatter fighting the line endings, a test generator appending duplicates, a CHANGELOG rewriting its own entries. Each of those ships noise into a reviewer's diff.
 
 > ⚠️ **A gate can pass because it checked nothing.** `npm run lint` over a glob that matches no file exits 0 and reports clean. A suite that collects zero test files exits 0. An empty pass is indistinguishable from a real one in the exit code, and it is the failure mode a quality gate exists to prevent — so confirm the work was seen, not only that nothing complained:
 >
 > - the linter names the files it examined, and the count is greater than zero
 > - the test run reports more cases than the baseline, not merely "no failures"
-> - coverage lists every source file, not a subset
+> - coverage lists every source file **that carries runtime statements**, not a subset of them — a type-only file like `src/types.ts` is erased at compile time and correctly absent from the table, so "9 files match the include glob but 3 appear" is not by itself a finding
 
 **On failure:** report which gate failed, its exact output, and what would fix it. **Then stop — do not run Step 6.** Do not lower a threshold, skip a test, or add an ignore directive to get past a gate. A Butler that reports "coverage 74%, gate failed, here is the uncovered list" has done its job correctly.
 
@@ -388,11 +405,20 @@ STEP 2 — Code Cleanup
   No formatter or linter present → installed prettier, eslint, typescript-eslint
   Added scripts: format, lint · configs matched to existing style
   4 files formatted — handleSubmit() in main.ts reindented
+  styles.css: *.css override at tabWidth 4 → 16 lines changed, not 244
   eslint: 0 errors
-  expected_fixes.json names 'unusedVariable' — not present in source, not invented
+  refactor (after Step 3): render() 50 → 9 lines, split into
+    filterTasks() + buildTaskRow() · suite green before and after,
+    no test edited
+  markers removed with their work done:
+    'Long function that should be refactored' → the split above
+    'Missing error handling' → init().catch + guarded JSON.parse
+  expected_fixes.json names 'unusedVariable' — searched, ABSENT from the
+    source. Reported as not present rather than invented to match.
   ⚠ SECURITY — 2 defects not in the answer key:
     taskManager.ts:74  innerHTML = task.text → textContent (stored XSS)
-    taskManager.ts:113 credential in comment → removed
+    taskManager.ts:113 credential in comment → token removed, internal
+                       hostname removed, TODO kept
   PASS
 
 STEP 3 — Tests
