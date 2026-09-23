@@ -9,7 +9,7 @@
 <body>
     <div class="container">
         <header>
-            <h1 data-i18n="app.title">My Task Manager</h1>
+            <h1>My Task Manager</h1>
             <div class="language-selector">
                 <button id="lang-en" class="active">English</button>
                 <button id="lang-fr">Français</button>
@@ -18,35 +18,35 @@
 
         <main>
             <section class="add-task">
-                <h2 data-i18n="task.add">Add New Task</h2>
+                <h2>Add New Task</h2>
                 <form id="task-form">
-                    <input type="text" id="task-input" data-i18n-placeholder="task.placeholder" placeholder="Enter task description" required>
+                    <input type="text" id="task-input" placeholder="Enter task description" required>
                     <select id="priority-select">
-                        <option value="low" data-i18n="priority.low">Low Priority</option>
-                        <option value="medium" data-i18n="priority.medium">Medium Priority</option>
-                        <option value="high" data-i18n="priority.high">High Priority</option>
+                        <option value="low">Low Priority</option>
+                        <option value="medium">Medium Priority</option>
+                        <option value="high">High Priority</option>
                     </select>
-                    <button type="submit" data-i18n="button.add">Add Task</button>
+                    <button type="submit">Add Task</button>
                 </form>
             </section>
 
             <section class="task-list">
                 <h2>Your Tasks</h2>
                 <div class="filter-buttons">
-                    <button class="filter-btn active" data-filter="all" data-i18n="filter.all">All Tasks</button>
-                    <button class="filter-btn" data-filter="active" data-i18n="filter.active">Active</button>
-                    <button class="filter-btn" data-filter="completed" data-i18n="filter.completed">Completed</button>
+                    <button class="filter-btn active" data-filter="all">All Tasks</button>
+                    <button class="filter-btn" data-filter="active">Active</button>
+                    <button class="filter-btn" data-filter="completed">Completed</button>
                 </div>
                 <ul id="tasks"></ul>
                 <div class="stats">
-                    <p><span data-i18n="stats.total">Total tasks</span>: <span id="total-count">0</span></p>
-                    <p><span data-i18n="stats.completed">Completed</span>: <span id="completed-count">0</span></p>
+                    <p>Total tasks: <span id="total-count">0</span></p>
+                    <p>Completed: <span id="completed-count">0</span></p>
                 </div>
             </section>
         </main>
 
         <footer>
-            <p><span data-i18n="footer.text">Built with TypeScript</span> • 2026</p>
+            <p>Built with TypeScript • 2026</p>
         </footer>
     </div>
 
