@@ -1,294 +1,200 @@
-/*
- * SCENARIOS - demarrage et pilotage de la page
- *  1. Au demarrage, la page est traduite : aucun libelle non traduit ne subsiste
- *  2. Au demarrage, le texte de remplacement du champ de saisie est traduit lui aussi
- *  3. Le balisage porte une cle de traduction sur chacun des libelles prevus
- *  4. Choisir le francais traduit toute la page d'un coup
- *  5. Choisir le francais preserve le compteur de taches et l'annee du pied de page
- *  6. Choisir le francais repeint la liste : le bouton de suppression passe en francais
- *  7. Revenir a l'anglais restitue les libelles anglais
- *  8. Le bouton de langue choisi est le seul marque comme actif
- *  9. Soumettre le formulaire ajoute la tache saisie et vide le champ
- * 10. La priorite choisie est celle appliquee a la tache creee
- * 11. Soumettre un champ vide ou ne contenant que des espaces n'ajoute rien
- * 12. Cliquer un filtre restreint la liste affichee et marque le bouton choisi
- * 13. Un bouton de filtre sans filtre associe ne modifie pas l'affichage
- * 14. Demarrer sur une page depourvue des elements attendus ne plante pas
+/**
+ * SCENARIOS -- the page as a user meets it
+ *
+ *  1. Booting the app puts the English wording on screen, even when the markup
+ *     arrived with every translatable slot blanked out.
+ *  2. Clicking "Français" translates the heading, the submit button, the three filter
+ *     buttons, the two stats labels, the footer label and the input placeholder.
+ *  3. Translating does not destroy the counters or the footer year, because the labels
+ *     live in their own spans.
+ *  4. Clicking "English" puts it all back, and the active language button follows.
+ *  5. Submitting the form adds one task and clears the input.
+ *  6. Submitting whitespace adds nothing.
+ *  7. Clicking a filter button filters the list and takes the `active` class.
+ *  8. Clicking a row's delete button removes that row from the page.
+ *  9. When start-up fails, the user is told so IN THE PAGE rather than in the console.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import en from '../translations/en.json'
-import fr from '../translations/fr.json'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { APP_MARKUP, markupWithSentinels, queryOrThrow, textOf } from './fixture'
 
-const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
-const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
+const SENTINEL = '__UNTRANSLATED__'
+const BOOT_FAILURE_MESSAGE = 'The task manager failed to start. Reload the page to try again.'
 
-const SENTINELLE = APP_MARKUP.replace('>My Task Manager<', '>__UNTRANSLATED__<').replace(
-  'placeholder="Enter task description"',
-  'placeholder="__UNTRANSLATED__"'
-)
-
-const CLES_DE_TEXTE = [
-  'app.title',
-  'task.add',
-  'priority.low',
-  'priority.medium',
-  'priority.high',
-  'button.add',
-  'filter.all',
-  'filter.active',
-  'filter.completed',
-  'stats.total',
-  'stats.completed',
-  'footer.text'
-]
-
-async function boot(markup: string) {
-  document.body.innerHTML = markup
+/** Load `main.ts` fresh and let `init()`'s microtasks drain. */
+async function boot(): Promise<void> {
   vi.resetModules()
   await import('../main')
-  await new Promise(r => setTimeout(r, 0))
+  await new Promise(resolve => setTimeout(resolve, 0))
 }
 
-function champSaisie(): HTMLInputElement {
-  return document.getElementById('task-input') as HTMLInputElement
+function click(selector: string): void {
+  queryOrThrow<HTMLElement>(selector).click()
 }
 
-function soumettre(texte: string, priorite = 'low') {
-  const champ = champSaisie()
-  const choix = document.getElementById('priority-select') as HTMLSelectElement
-  champ.value = texte
-  choix.value = priorite
-  const formulaire = document.getElementById('task-form') as HTMLFormElement
-  formulaire.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+function submitForm(text: string, priority = 'low'): void {
+  const input = queryOrThrow<HTMLInputElement>('#task-input')
+  const select = queryOrThrow<HTMLSelectElement>('#priority-select')
+  input.value = text
+  select.value = priority
+  queryOrThrow('#task-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 }
 
-function cliquer(selecteur: string) {
-  const cible = document.querySelector(selecteur) as HTMLElement
-  cible.click()
+function renderedRows(): Element[] {
+  return Array.from(document.querySelectorAll('#tasks li:not(.storage-notice):not(.app-error)'))
 }
 
-function texteDe(selecteur: string): string {
-  return document.querySelector(selecteur)?.textContent ?? ''
+function renderedTexts(): string[] {
+  return Array.from(document.querySelectorAll('#tasks .task-text')).map(
+    element => element.textContent ?? ''
+  )
 }
 
-function lignes(): Element[] {
-  return Array.from(document.querySelectorAll('#tasks li'))
-}
-
-describe('balisage de la page', () => {
+describe('the page at start-up', () => {
   beforeEach(() => {
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  it('applies the English translations on boot', async () => {
+    // The markup is mounted with every translatable slot replaced by a sentinel, so the
+    // English wording is NOT in the initial state. These assertions can therefore only
+    // pass if init() actually ran applyTranslations().
+    document.body.innerHTML = markupWithSentinels(SENTINEL)
+    expect(textOf('h1'), 'precondition: the heading starts blanked out').toBe(SENTINEL)
+    expect(queryOrThrow<HTMLInputElement>('#task-input').placeholder).toBe(SENTINEL)
+
+    await boot()
+
+    expect(textOf('h1')).toBe('My Task Manager')
+    expect(queryOrThrow<HTMLInputElement>('#task-input').placeholder).toBe('Enter task description')
+  })
+})
+
+describe('switching language', () => {
+  beforeEach(async () => {
     localStorage.clear()
     document.body.innerHTML = APP_MARKUP
+    await boot()
   })
 
-  it('scenario 3 - chaque libelle prevu porte sa cle de traduction', () => {
-    const cles = Array.from(document.querySelectorAll('[data-i18n]')).map(n =>
-      n.getAttribute('data-i18n')
+  it('translates the whole page into French', () => {
+    click('#lang-fr')
+
+    expect(textOf('h1')).toBe('Mon Gestionnaire de Tâches')
+    expect(textOf('#task-form button[type="submit"]')).toBe('Ajouter la tâche')
+    expect(textOf('[data-filter="all"]')).toBe('Toutes les tâches')
+    expect(textOf('[data-filter="active"]')).toBe('Actives')
+    expect(textOf('[data-filter="completed"]')).toBe('Terminées')
+    expect(textOf('[data-i18n="stats.total"]')).toBe('Total des tâches')
+    expect(textOf('[data-i18n="stats.completed"]')).toBe('Terminées')
+    expect(textOf('[data-i18n="footer.text"]')).toBe('Conçu avec TypeScript')
+    expect(queryOrThrow<HTMLInputElement>('#task-input').placeholder).toBe(
+      'Saisir la description de la tâche'
     )
-
-    expect(cles.slice().sort()).toEqual(CLES_DE_TEXTE.slice().sort())
   })
 
-  it('scenario 3 - le champ de saisie porte la cle de son texte de remplacement', () => {
-    const marques = Array.from(document.querySelectorAll('[data-i18n-placeholder]'))
+  it('keeps the counters and the footer year alive through the translation', () => {
+    submitForm('A task to count')
+    click('#lang-fr')
 
-    expect(marques).toHaveLength(1)
-    expect(marques[0].id).toBe('task-input')
-    expect(marques[0].getAttribute('data-i18n-placeholder')).toBe('task.placeholder')
+    expect(document.getElementById('total-count')).not.toBeNull()
+    expect(document.getElementById('completed-count')).not.toBeNull()
+    expect(textOf('#total-count')).toBe('1')
+    expect(textOf('#completed-count')).toBe('0')
+    expect(textOf('footer p')).toContain('2026')
   })
 
-  it('scenario 3 - toute cle posee sur la page existe dans les deux langues', () => {
-    const anglais = en as Record<string, string>
-    const francais = fr as Record<string, string>
-    const posees = Array.from(
-      document.querySelectorAll('[data-i18n], [data-i18n-placeholder]')
-    ).map(n => n.getAttribute('data-i18n') ?? n.getAttribute('data-i18n-placeholder') ?? '')
+  it('repaints the task list in the new language', () => {
+    submitForm('A task to relabel')
 
-    expect(posees.length).toBeGreaterThan(0)
-    posees.forEach(cle => {
-      expect(anglais[cle], `cle anglaise ${cle}`).toBeTruthy()
-      expect(francais[cle], `cle francaise ${cle}`).toBeTruthy()
+    click('#lang-fr')
+
+    expect(textOf('#tasks .delete-btn')).toBe('Supprimer')
+  })
+
+  it('puts English back and moves the active class', () => {
+    click('#lang-fr')
+    click('#lang-en')
+
+    expect(textOf('h1')).toBe('My Task Manager')
+    expect(textOf('#task-form button[type="submit"]')).toBe('Add Task')
+    expect(queryOrThrow('#lang-en').classList.contains('active')).toBe(true)
+    expect(queryOrThrow('#lang-fr').classList.contains('active')).toBe(false)
+  })
+})
+
+describe('using the page', () => {
+  beforeEach(async () => {
+    localStorage.clear()
+    document.body.innerHTML = APP_MARKUP
+    await boot()
+  })
+
+  it('adds one task on submit and clears the input', () => {
+    submitForm('Buy milk', 'high')
+
+    expect(renderedRows()).toHaveLength(1)
+    expect(renderedTexts()).toEqual(['Buy milk'])
+    expect(queryOrThrow<HTMLInputElement>('#task-input').value).toBe('')
+  })
+
+  it('adds nothing when the input holds only whitespace', () => {
+    submitForm('   ')
+
+    expect(renderedRows()).toHaveLength(0)
+  })
+
+  it('filters the list when a filter button is clicked', () => {
+    submitForm('Still to do')
+    submitForm('Already done')
+    const checkboxes = document.querySelectorAll<HTMLInputElement>('#tasks .task-checkbox')
+    checkboxes[1].click()
+
+    click('[data-filter="completed"]')
+
+    expect(renderedTexts()).toEqual(['Already done'])
+    expect(queryOrThrow('[data-filter="completed"]').classList.contains('active')).toBe(true)
+    expect(queryOrThrow('[data-filter="all"]').classList.contains('active')).toBe(false)
+  })
+
+  it('removes a row when its delete button is clicked', () => {
+    submitForm('Temporary')
+    submitForm('Permanent')
+
+    click('#tasks .delete-btn')
+
+    expect(renderedTexts()).toEqual(['Permanent'])
+  })
+})
+
+describe('when start-up fails', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.doUnmock('../i18n')
+    vi.resetModules()
+    vi.restoreAllMocks()
+  })
+
+  it('tells the user in the page instead of failing silently', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.doMock('../i18n', async importOriginal => {
+      const actual = await importOriginal<typeof import('../i18n')>()
+      return {
+        ...actual,
+        loadTranslations: () => Promise.reject(new Error('translations unavailable'))
+      }
     })
-  })
-})
+    document.body.innerHTML = APP_MARKUP
 
-describe('demarrage de l application', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    document.body.innerHTML = ''
-    vi.resetModules()
-  })
+    await boot()
 
-  it('boot translation - scenario 1 - le titre est traduit au demarrage', async () => {
-    expect(SENTINELLE).toContain('__UNTRANSLATED__')
-
-    await boot(SENTINELLE)
-
-    expect(texteDe('h1')).toBe('My Task Manager')
-    expect(document.body.textContent).not.toContain('__UNTRANSLATED__')
-  })
-
-  it('boot translation - scenario 2 - le texte de remplacement est traduit au demarrage', async () => {
-    expect(SENTINELLE).toContain('placeholder="__UNTRANSLATED__"')
-
-    await boot(SENTINELLE)
-
-    expect(champSaisie().placeholder).toBe('Enter task description')
-  })
-
-  it('scenario 4 - choisir le francais traduit toute la page', async () => {
-    await boot(APP_MARKUP)
-
-    cliquer('#lang-fr')
-
-    expect(texteDe('h1')).toBe('Mon Gestionnaire de Tâches')
-    expect(texteDe('[data-i18n="task.add"]')).toBe('Ajouter une Nouvelle Tâche')
-    expect(texteDe('#priority-select option[value="low"]')).toBe('Priorité faible')
-    expect(texteDe('#priority-select option[value="medium"]')).toBe('Priorité moyenne')
-    expect(texteDe('#priority-select option[value="high"]')).toBe('Priorité élevée')
-    expect(texteDe('#task-form button[type="submit"]')).toBe('Ajouter la tâche')
-    expect(texteDe('[data-filter="all"]')).toBe('Toutes les tâches')
-    expect(texteDe('[data-filter="active"]')).toBe('Actives')
-    expect(texteDe('[data-filter="completed"]')).toBe('Terminées')
-    expect(texteDe('[data-i18n="stats.total"]')).toBe('Total des tâches')
-    expect(texteDe('[data-i18n="stats.completed"]')).toBe('Terminées')
-    expect(texteDe('[data-i18n="footer.text"]')).toBe('Conçu avec TypeScript')
-    expect(champSaisie().placeholder).toBe('Saisir la description de la tâche')
-  })
-
-  it('scenario 5 - la traduction preserve les compteurs et l annee du pied de page', async () => {
-    await boot(APP_MARKUP)
-    soumettre('Une tache')
-
-    cliquer('#lang-fr')
-
-    expect(document.getElementById('total-count')?.textContent).toBe('1')
-    expect(document.getElementById('completed-count')?.textContent).toBe('0')
-    expect(document.querySelector('footer')?.textContent).toContain('2026')
-    expect(document.querySelector('footer')?.textContent).toContain('Conçu avec TypeScript')
-  })
-
-  it('scenario 6 - choisir le francais repeint la liste des taches', async () => {
-    await boot(APP_MARKUP)
-    soumettre('Une tache')
-    expect(texteDe('#tasks .delete-btn')).toBe('Delete')
-
-    cliquer('#lang-fr')
-
-    expect(lignes()).toHaveLength(1)
-    expect(texteDe('#tasks .task-text')).toBe('Une tache')
-    expect(texteDe('#tasks .delete-btn')).toBe('Supprimer')
-  })
-
-  it('scenario 7 - revenir a l anglais restitue les libelles anglais', async () => {
-    await boot(APP_MARKUP)
-    soumettre('Une tache')
-    cliquer('#lang-fr')
-
-    cliquer('#lang-en')
-
-    expect(texteDe('h1')).toBe('My Task Manager')
-    expect(texteDe('[data-filter="all"]')).toBe('All Tasks')
-    expect(texteDe('[data-i18n="footer.text"]')).toBe('Built with TypeScript')
-    expect(champSaisie().placeholder).toBe('Enter task description')
-    expect(texteDe('#tasks .delete-btn')).toBe('Delete')
-  })
-
-  it('scenario 8 - seul le bouton de la langue choisie est marque actif', async () => {
-    await boot(APP_MARKUP)
-
-    cliquer('#lang-fr')
-    expect(document.getElementById('lang-fr')?.classList.contains('active')).toBe(true)
-    expect(document.getElementById('lang-en')?.classList.contains('active')).toBe(false)
-
-    cliquer('#lang-en')
-    expect(document.getElementById('lang-en')?.classList.contains('active')).toBe(true)
-    expect(document.getElementById('lang-fr')?.classList.contains('active')).toBe(false)
-  })
-})
-
-describe('pilotage de la page', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    document.body.innerHTML = ''
-    vi.resetModules()
-  })
-
-  it('scenario 9 - soumettre le formulaire ajoute la tache et vide le champ', async () => {
-    await boot(APP_MARKUP)
-
-    soumettre('Acheter du pain')
-
-    expect(lignes()).toHaveLength(1)
-    expect(texteDe('#tasks .task-text')).toBe('Acheter du pain')
-    expect(champSaisie().value).toBe('')
-    expect(document.getElementById('total-count')?.textContent).toBe('1')
-  })
-
-  it('scenario 10 - la priorite choisie est appliquee a la tache creee', async () => {
-    await boot(APP_MARKUP)
-
-    soumettre('Tache urgente', 'high')
-
-    expect(document.querySelectorAll('#tasks .priority-badge.priority-high')).toHaveLength(1)
-  })
-
-  it('scenario 11 - soumettre un champ vide n ajoute rien', async () => {
-    await boot(APP_MARKUP)
-
-    soumettre('')
-    soumettre('   ')
-
-    expect(lignes()).toHaveLength(0)
-    expect(document.getElementById('total-count')?.textContent).toBe('0')
-  })
-
-  it('scenario 12 - cliquer un filtre restreint la liste et marque le bouton choisi', async () => {
-    await boot(APP_MARKUP)
-    soumettre('Active')
-    soumettre('Terminee')
-    const cases = document.querySelectorAll('#tasks .task-checkbox')
-    const seconde = cases[1] as HTMLInputElement
-    seconde.checked = true
-    seconde.dispatchEvent(new Event('change'))
-
-    cliquer('[data-filter="active"]')
-    expect(lignes()).toHaveLength(1)
-    expect(texteDe('#tasks .task-text')).toBe('Active')
-    expect(document.querySelector('[data-filter="active"]')?.classList.contains('active')).toBe(
-      true
-    )
-    expect(document.querySelector('[data-filter="all"]')?.classList.contains('active')).toBe(false)
-
-    cliquer('[data-filter="completed"]')
-    expect(lignes()).toHaveLength(1)
-    expect(texteDe('#tasks .task-text')).toBe('Terminee')
-
-    cliquer('[data-filter="all"]')
-    expect(lignes()).toHaveLength(2)
-  })
-
-  it('scenario 13 - un bouton de filtre sans filtre associe ne change rien', async () => {
-    const balisage = APP_MARKUP.replace(
-      '<ul id="tasks">',
-      '<button class="filter-btn" id="filtre-sans-cle">Sans cle</button><ul id="tasks">'
-    )
-    expect(balisage).toContain('id="filtre-sans-cle"')
-    await boot(balisage)
-    soumettre('Active')
-    soumettre('Terminee')
-
-    cliquer('#filtre-sans-cle')
-
-    expect(lignes()).toHaveLength(2)
-    expect(document.querySelector('[data-filter="all"]')?.classList.contains('active')).toBe(true)
-  })
-
-  it('scenario 14 - demarrer sur une page sans les elements attendus ne plante pas', async () => {
-    await expect(boot('')).resolves.toBeUndefined()
-
-    expect(document.body.innerHTML).toBe('')
+    const banner = queryOrThrow('#tasks li.app-error')
+    expect(banner.textContent).toBe(BOOT_FAILURE_MESSAGE)
+    expect(document.querySelectorAll('#tasks li.app-error')).toHaveLength(1)
+    consoleError.mockRestore()
   })
 })

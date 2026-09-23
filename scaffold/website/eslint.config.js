@@ -1,7 +1,9 @@
 import js from '@eslint/js'
-import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
+// Minimal, deliberately conventional rule set: the repository shipped without a linter,
+// so these rules are the ones this run introduces. "0 violations" means "none under
+// these rules", not "the code is perfect" — a stricter config would find more.
 export default tseslint.config(
   { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
   js.configs.recommended,
@@ -9,13 +11,10 @@ export default tseslint.config(
   {
     files: ['**/*.ts'],
     languageOptions: {
-      globals: { ...globals.browser, ...globals.node }
+      ecmaVersion: 2022,
+      sourceType: 'module'
     },
     rules: {
-      // TypeScript resolves identifiers itself and `npm run typecheck` gates on it,
-      // so ESLint's own resolver would only add false positives on type-only names.
-      'no-undef': 'off',
-      'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'prefer-const': 'error',
       'no-var': 'error',

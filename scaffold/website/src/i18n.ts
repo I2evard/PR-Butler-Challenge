@@ -9,13 +9,13 @@ const translations: Translations = {
 }
 
 /**
- * Makes the catalogues available to the rest of the app.
+ * Makes the catalogues usable by `t()`.
  *
- * Both locales are bundled at build time, so there is nothing to fetch. The
- * function stays async so a later move to on-demand loading does not ripple
- * through every caller.
+ * The catalogues are bundled at build time, so there is nothing to fetch; the function
+ * stays asynchronous so that moving them behind a network call later does not change
+ * a single call site.
  *
- * @returns A promise that settles once the catalogues are usable.
+ * @returns a promise that settles once the catalogues are ready to be read
  */
 export async function loadTranslations() {
   // Translations are imported statically
@@ -23,59 +23,64 @@ export async function loadTranslations() {
 }
 
 /**
- * Selects the catalogue that {@link t} reads from.
+ * Chooses the catalogue that `t()` reads from.
  *
- * Nothing is repainted and the choice is not persisted: callers decide when to
- * refresh the DOM, normally through {@link applyTranslations}.
+ * Changing the language does not repaint anything on its own — call
+ * {@link applyTranslations} afterwards to push the new wording into the page.
  *
- * @param lang - Language code to activate, such as `'en'` or `'fr'`.
+ * @param lang two-letter code of the catalogue to use; an unknown code makes `t()`
+ *   fall back to returning keys
  */
 export function setLanguage(lang: string) {
   currentLanguage = lang
 }
 
 /**
- * Looks a label up in the active catalogue.
+ * Looks a wording up in the active catalogue.
  *
- * An unknown key resolves to the key itself rather than an empty string, so a
- * gap in a catalogue shows up on screen instead of silently blanking the label.
- *
- * @param key - Catalogue entry, such as `'button.delete'`.
- * @returns The translated label, or `key` when no entry exists.
+ * @param key catalogue key, e.g. `button.delete`
+ * @returns the translated wording, or the key itself when the catalogue has no entry
+ *   for it — a visible `button.delete` on screen is the signal that a key is missing
  */
 export function t(key: string): string {
   return translations[currentLanguage]?.[key] || key
 }
 
 /**
- * Reports which catalogue is currently active.
+ * Reports which catalogue is currently in force.
  *
- * @returns The language code last passed to {@link setLanguage}.
+ * @returns the two-letter code last given to {@link setLanguage}
  */
 export function getCurrentLanguage() {
   return currentLanguage
 }
 
 /**
- * Rewrites the visible strings of a subtree into the active language.
+ * Pushes the active catalogue into the markup.
  *
- * Elements opt in by carrying `data-i18n` (replaces text content) or
- * `data-i18n-placeholder` (replaces the placeholder attribute). Anything
- * untagged is left alone, which is how the strings with no catalogue entry keep
- * their markup text.
+ * Every element carrying `data-i18n="<key>"` has its text replaced, and every element
+ * carrying `data-i18n-placeholder="<key>"` has its placeholder replaced. Those two
+ * attributes are the only contract between the page and the catalogues: an element
+ * without one keeps whatever the markup gave it.
  *
- * @param root - Subtree to translate; defaults to the whole document.
+ * Because the text is written with `textContent`, only an element whose text is the
+ * *whole* of its content may carry `data-i18n` — a label sitting beside a counter or a
+ * date must be wrapped in its own element first, or the sibling is wiped.
+ *
+ * @param root subtree to translate; defaults to the whole document
  */
-export function applyTranslations(root: ParentNode = document) {
-  root.querySelectorAll<HTMLElement>('[data-i18n]').forEach(element => {
-    const key = element.dataset.i18n
-    if (key) element.textContent = t(key)
+export function applyTranslations(root: ParentNode = document): void {
+  root.querySelectorAll('[data-i18n]').forEach(element => {
+    const key = element.getAttribute('data-i18n')
+    if (key) {
+      element.textContent = t(key)
+    }
   })
 
-  root
-    .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-i18n-placeholder]')
-    .forEach(element => {
-      const key = element.dataset.i18nPlaceholder
-      if (key) element.placeholder = t(key)
-    })
+  root.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+    const key = element.getAttribute('data-i18n-placeholder')
+    if (key) {
+      element.setAttribute('placeholder', t(key))
+    }
+  })
 }

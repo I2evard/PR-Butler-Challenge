@@ -19,5 +19,5 @@ describe('TaskManager', () => {
     expect(manager.getCompletedCount()).toBe(0)
   })
 
-  // Deliberately minimal test coverage - many functions untested
+  // Baseline cases from the scaffold; behaviour coverage lives in taskManagerBehaviour.test.ts
 })

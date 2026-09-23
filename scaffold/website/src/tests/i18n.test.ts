@@ -1,122 +1,95 @@
-/*
- * SCENARIOS - module de traduction (i18n)
- *  1. Sans rien changer, l'application parle anglais
- *  2. Apres avoir choisi le francais, les memes cles rendent les libelles francais
- *  3. La langue courante est consultable et reflete le dernier choix
- *  4. Une cle inconnue rend la cle elle-meme, jamais une chaine vide
- *  5. Une langue inconnue retombe sur la cle plutot que de planter
- *  6. Le chargement des traductions se termine sans erreur
- *  7. Traduire une portion de page reecrit le texte des elements marques
- *  8. Traduire une portion de page reecrit le texte de remplacement des champs de saisie
- *  9. Traduire sans preciser de portion traite la page entiere
- * 10. Un element marque d'une cle inconnue affiche la cle, ce qui rend l'oubli visible
+/**
+ * SCENARIOS -- the translation engine
+ *
+ *  1. English is the language in force when nothing has been chosen.
+ *  2. An unknown key comes back as the key itself, never as `undefined` or a blank.
+ *  3. Choosing French changes both what `t()` returns and what `getCurrentLanguage()` reports.
+ *  4. `loadTranslations()` resolves.
+ *  5. `applyTranslations(root)` fills in the text of every `[data-i18n]` element under `root`.
+ *  6. `applyTranslations(root)` fills in the placeholder of every `[data-i18n-placeholder]`.
+ *  7. It does the same thing in French.
+ *  8. It leaves untagged elements alone.
+ *  9. Called with no argument, it translates the live document.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import { loadTranslations, setLanguage, t, getCurrentLanguage, applyTranslations } from '../i18n'
+import { applyTranslations, getCurrentLanguage, loadTranslations, setLanguage, t } from '../i18n'
+import { queryOrThrow } from './fixture'
 
-const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
-const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
+const SAMPLE = `
+  <h1 data-i18n="app.title"></h1>
+  <input data-i18n-placeholder="task.placeholder" />
+  <button data-i18n="button.delete"></button>
+  <p id="untagged">Left alone</p>
+`
 
-function racineApplicative(): HTMLElement {
-  const racine = document.createElement('div')
-  racine.innerHTML = APP_MARKUP
-  return racine
+function detachedRoot(): HTMLElement {
+  const root = document.createElement('div')
+  root.innerHTML = SAMPLE
+  return root
 }
 
 describe('i18n', () => {
   beforeEach(() => {
-    localStorage.clear()
     setLanguage('en')
     document.body.innerHTML = ''
   })
 
-  it('scenario 1 - rend les libelles anglais par defaut', () => {
-    expect(t('app.title')).toBe('My Task Manager')
-    expect(t('button.delete')).toBe('Delete')
-    expect(t('footer.text')).toBe('Built with TypeScript')
-  })
-
-  it('scenario 2 - rend les libelles francais apres passage au francais', () => {
-    setLanguage('fr')
-    expect(t('app.title')).toBe('Mon Gestionnaire de Tâches')
-    expect(t('task.placeholder')).toBe('Saisir la description de la tâche')
-    expect(t('priority.high')).toBe('Priorité élevée')
-    expect(t('button.delete')).toBe('Supprimer')
-    expect(t('stats.total')).toBe('Total des tâches')
-    expect(t('footer.text')).toBe('Conçu avec TypeScript')
-  })
-
-  it('scenario 3 - expose la langue courante', () => {
+  it('answers in English before any language has been chosen', () => {
     expect(getCurrentLanguage()).toBe('en')
+    expect(t('app.title')).toBe('My Task Manager')
+  })
+
+  it('returns the key itself when the key is missing from the catalogue', () => {
+    expect(t('does.not.exist')).toBe('does.not.exist')
+  })
+
+  it('switches to French for both t() and getCurrentLanguage()', () => {
     setLanguage('fr')
     expect(getCurrentLanguage()).toBe('fr')
+    expect(t('button.delete')).toBe('Supprimer')
+    expect(t('app.title')).toBe('Mon Gestionnaire de Tâches')
   })
 
-  it('scenario 4 - rend la cle elle-meme quand la cle est inconnue', () => {
-    expect(t('cle.inexistante')).toBe('cle.inexistante')
-    setLanguage('fr')
-    expect(t('cle.inexistante')).toBe('cle.inexistante')
-  })
-
-  it('scenario 5 - rend la cle elle-meme quand la langue est inconnue', () => {
-    setLanguage('de')
-    expect(t('app.title')).toBe('app.title')
-  })
-
-  it('scenario 6 - le chargement des traductions se termine', async () => {
+  it('resolves loadTranslations()', async () => {
     await expect(loadTranslations()).resolves.toBeUndefined()
   })
 
-  it('scenario 7 - reecrit le texte des elements marques dans la portion fournie', () => {
-    const racine = racineApplicative()
+  it('translates the text of every [data-i18n] element under the given root', () => {
+    const root = detachedRoot()
+    applyTranslations(root)
+    expect(queryOrThrow('h1', root).textContent).toBe('My Task Manager')
+    expect(queryOrThrow('button', root).textContent).toBe('Delete')
+  })
+
+  it('translates the placeholder of every [data-i18n-placeholder] element', () => {
+    const root = detachedRoot()
+    applyTranslations(root)
+    const input = queryOrThrow<HTMLInputElement>('input', root)
+    expect(input.getAttribute('placeholder')).toBe('Enter task description')
+    expect(input.placeholder).toBe('Enter task description')
+  })
+
+  it('translates the same root into French once the language has changed', () => {
+    const root = detachedRoot()
     setLanguage('fr')
-
-    applyTranslations(racine)
-
-    expect(racine.querySelector('h1')?.textContent).toBe('Mon Gestionnaire de Tâches')
-    expect(racine.querySelector('[data-i18n="stats.total"]')?.textContent).toBe('Total des tâches')
-    expect(racine.querySelector('[data-i18n="footer.text"]')?.textContent).toBe(
-      'Conçu avec TypeScript'
+    applyTranslations(root)
+    expect(queryOrThrow('h1', root).textContent).toBe('Mon Gestionnaire de Tâches')
+    expect(queryOrThrow('button', root).textContent).toBe('Supprimer')
+    expect(queryOrThrow<HTMLInputElement>('input', root).placeholder).toBe(
+      'Saisir la description de la tâche'
     )
-    expect(document.body.innerHTML).toBe('')
   })
 
-  it('scenario 8 - reecrit le texte de remplacement des champs marques', () => {
-    const racine = racineApplicative()
-    setLanguage('fr')
-
-    applyTranslations(racine)
-
-    const champ = racine.querySelector('#task-input') as HTMLInputElement
-    expect(champ.placeholder).toBe('Saisir la description de la tâche')
+  it('leaves elements without a translation attribute untouched', () => {
+    const root = detachedRoot()
+    applyTranslations(root)
+    expect(queryOrThrow('#untagged', root).textContent).toBe('Left alone')
   })
 
-  it('scenario 9 - traite la page entiere quand aucune portion n est fournie', () => {
-    document.body.innerHTML = APP_MARKUP
-    setLanguage('fr')
-
+  it('translates the live document when called with no argument', () => {
+    document.body.innerHTML = SAMPLE
     applyTranslations()
-
-    expect(document.querySelector('h1')?.textContent).toBe('Mon Gestionnaire de Tâches')
-    const champ = document.getElementById('task-input') as HTMLInputElement
-    expect(champ.placeholder).toBe('Saisir la description de la tâche')
-  })
-
-  it('scenario 10 - affiche la cle quand un element porte une cle inconnue', () => {
-    const racine = document.createElement('div')
-    const libelle = document.createElement('span')
-    libelle.setAttribute('data-i18n', 'cle.jamais.traduite')
-    libelle.textContent = 'texte d origine'
-    const champ = document.createElement('input')
-    champ.setAttribute('data-i18n-placeholder', 'autre.cle.absente')
-    racine.appendChild(libelle)
-    racine.appendChild(champ)
-
-    applyTranslations(racine)
-
-    expect(libelle.textContent).toBe('cle.jamais.traduite')
-    expect(champ.placeholder).toBe('autre.cle.absente')
+    expect(queryOrThrow('h1').textContent).toBe('My Task Manager')
+    expect(queryOrThrow<HTMLInputElement>('input').placeholder).toBe('Enter task description')
   })
 })

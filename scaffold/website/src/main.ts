@@ -5,25 +5,30 @@ import './styles.css'
 
 let taskManager: TaskManager
 
+/** Shown in the task list when the app never finished starting. */
+const BOOT_FAILURE_MESSAGE = 'The task manager failed to start. Reload the page to try again.'
+
 /**
- * Boots the application: loads the catalogues, restores saved tasks, wires the
- * page up and paints the first frame in the active language.
+ * Brings the page to life: catalogues, state, listeners, first paint.
  *
- * @returns A promise that settles once the page is interactive.
+ * The translation pass runs before anything is rendered, so the static English text in
+ * `index.html` is replaced rather than briefly shown.
+ *
+ * @returns a promise that settles once the page is interactive
  */
 async function init() {
   await loadTranslations()
+  applyTranslations()
   taskManager = new TaskManager()
   setupEventListeners()
-  applyTranslations()
   taskManager.render()
 }
 
 /**
- * Binds the page controls to the task manager.
+ * Binds the page's controls to the task manager.
  *
- * Every lookup is optional: the app is expected to survive a page that is
- * missing a control rather than abort the whole boot for one absent node.
+ * The filter buttons are bound as a group and read their own `data-filter`, so adding a
+ * filter to the markup needs no change here.
  */
 function setupEventListeners() {
   const form = document.getElementById('task-form') as HTMLFormElement
@@ -49,12 +54,12 @@ function setupEventListeners() {
 }
 
 /**
- * Turns a form submission into a new task and clears the field.
+ * Turns a form submission into a new task.
  *
- * Blank and whitespace-only input is ignored, so the native `required`
- * attribute is not the only thing standing between the user and an empty task.
+ * Suppresses the browser's own navigation, and treats a blank or whitespace-only entry
+ * as nothing at all rather than as an empty task.
  *
- * @param e - The form's submit event; its default navigation is suppressed.
+ * @param e the form's submit event
  */
 function handleSubmit(e: Event) {
   e.preventDefault()
@@ -67,13 +72,12 @@ function handleSubmit(e: Event) {
 }
 
 /**
- * Switches the interface to another language.
+ * Switches the interface to another language and repaints everything that carries text.
  *
- * Moves the active marker onto the chosen button, retranslates the static
- * markup, then repaints the task list — the rows are built in code, so they
- * carry labels that `applyTranslations` alone would not reach.
+ * Both halves matter: `applyTranslations()` rewrites the static markup, and the repaint
+ * rewrites the task rows, whose delete button is built in code rather than in the page.
  *
- * @param lang - Language code to switch to, such as `'en'` or `'fr'`.
+ * @param lang two-letter code of the language to switch to
  */
 function switchLanguage(lang: string) {
   setLanguage(lang)
@@ -89,6 +93,31 @@ function switchLanguage(lang: string) {
   taskManager.render()
 }
 
+/**
+ * Tells the user, in the page, that the app did not start.
+ *
+ * A `.catch` that only logs would be worse than the crash it replaces: the static HTML
+ * still paints, no control is wired, and the page looks normal while every click does
+ * nothing. The message has to land somewhere the user is already looking.
+ */
+function showStartupFailure() {
+  const taskList = document.getElementById('tasks')
+
+  if (taskList) {
+    const banner = document.createElement('li')
+    banner.className = 'app-error'
+    banner.textContent = BOOT_FAILURE_MESSAGE
+    taskList.replaceChildren(banner)
+    return
+  }
+
+  const fallback = document.createElement('p')
+  fallback.className = 'app-error'
+  fallback.textContent = BOOT_FAILURE_MESSAGE
+  document.body.appendChild(fallback)
+}
+
 init().catch(error => {
-  console.error('Task manager failed to start', error)
+  console.error('Task Manager failed to start:', error)
+  showStartupFailure()
 })

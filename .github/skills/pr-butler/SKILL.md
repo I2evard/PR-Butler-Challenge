@@ -87,7 +87,9 @@ npm run test:coverage
 >
 > Do it this way, so two runs produce the same structure:
 >
-> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the task input. **12 of the first, 1 of the second, 13 attributes in all**: the page title heading, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer text — and the input's placeholder.
+> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the task input. One correct run produced **12 of the first and 1 of the second, 13 in all**: the page title heading, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer text — and the input's placeholder.
+>
+>    **That number is a result, not a target.** Derive your own from the catalogue and the page; if yours differs, your derivation wins and the difference is what you report. A count stated as authoritative is a list to be trusted, and the next item is about exactly why lists here must not be.
 >
 >    **Three of those cannot take the attribute as the markup stands**, because `textContent` would destroy what sits beside the label:
 >
@@ -101,9 +103,30 @@ npm run test:coverage
 >
 >    **Do not work from this list — derive it.** It is here to show the shape of the fix, not to be trusted as complete. The test is mechanical: an element can carry `data-i18n` only if its text is *the whole* of its content. Anything with a sibling node — a counter, a separator, a date — needs the wrapper. Walk the page and apply that test to every element you are about to tag; the third case above was missing from an earlier version of this file, and a run that trusted the list would have wiped the completed counter on every language switch.
 > 2. Add `applyTranslations(root = document)` to `src/i18n.ts`: walk both attribute sets and rewrite `textContent` and `placeholder`.
+>
+>    **Set `document.documentElement.lang` in the same pass.** The page ships `<html lang="en">` and nothing ever moves it, so in French mode a screen reader pronounces "Mon Gestionnaire de Tâches" with an English voice and the browser hyphenates by English rules. It is one line, it is the only part of "switch language" that assistive technology can actually hear, and no visual check will ever miss its absence — because there is nothing to see.
 > 3. Call it from `init()` and from `switchLanguage()`, and repaint the task list after — the Delete button is built in `taskManager.ts` and must use `t('button.delete')`.
 >
-> Two elements have no key in `en.json`: the "Your Tasks" heading and the priority badge. **Leave them in English and say so.** Inventing a key puts a string in the catalogue that no one asked for.
+> **Some visible strings have no key in `en.json`, and that is by design — leave them in English and say so.** Inventing a key puts a string in the catalogue that no one asked for, and breaks the "all 14 keys" validation. On this page there are four, in two different categories:
+>
+> | String | Why it has no key |
+> |---|---|
+> | the "Your Tasks" heading | the catalogue simply omits it |
+> | the priority badge (`LOW` / `MEDIUM` / `HIGH`) | `priority.*` exists but reads "Low Priority" — those are the `<select>` labels, not a short chip |
+> | the language buttons (`English` / `Français`) | untranslatable by nature: each is already written in the language it selects |
+> | the document `<title>` | untranslatable by nature at boot; changing it needs `document.title`, not `textContent` |
+>
+> **Derive this list, do not trust it.** Same rule as the counts above: what is written here is what one correct run produced, and a later scaffold may differ. The useful distinction is between *the catalogue omits it* — report it — and *it cannot be translated this way* — explain it.
+>
+> ⚠️ **That tolerance covers what you INHERITED. It does not cover what you ADD.** Step 2's error handling puts new sentences on screen — a storage-discarded notice, a boot-failure banner. Hard-coding those in English ships untranslated user text **in a task whose subject is translation**, and on a French screen the heading reads "Mon Gestionnaire de Tâches" above an English error. Every string this run makes visible gets a key, in **both** catalogues.
+>
+> **The 14 is a floor, not a ceiling.** `expected_fixes.json` describes the gap in the *scaffold* — twelve keys missing out of fourteen required — not a cap on the application's vocabulary. So validate for what the requirement actually says:
+>
+> - the 14 required keys are present in `fr.json` — this is the check that must never bend;
+> - `en.json` and `fr.json` have **identical key sets, in identical order** — this is what keeps an addition honest;
+> - any key beyond the 14 exists in both files and is **named in `PR_REQUEST.md` with the string it carries and why the run needed it**.
+>
+> Do not write a validation that asserts `Object.keys(fr).length === 14`. It passes the scaffold and then forbids the application from ever gaining a word — including the words your own error handling requires.
 
 ### Step 2: Code Cleanup
 
@@ -126,7 +149,9 @@ npm run test:coverage
 
    > **`index.html` is in the glob on purpose.** The brief says *all source files*, and Step 1 makes `index.html` the **most-modified file of the whole run** — 13 new attributes and 3 new wrapper elements. A glob of `src/**` leaves it covered by no gate at all: `format:check` never reads it, `eslint src` never reads it, and the coverage table cannot see it. The one file the run changes most would be the one nothing checks.
    >
-   > It is not Prettier-clean in the scaffold as delivered, so adding it produces a real diff on the first run. That diff is the point, not a side effect.
+   > It is not Prettier-clean in the scaffold as delivered, so adding it produces a real diff on the first run. **Expect that diff to be the whole file, not a handful of lines**, and do not go hunting for a setting that avoids it: Prettier indents `<head>` and `<body>` one level under `<html>`, this page does not, and no `tabWidth` value changes that. Roughly 54 lines move. This is the one file where item 3's "do not rewrite untouched lines" rule is knowingly set aside — say so in `PR_REQUEST.md` so a reviewer knows the churn was a decision.
+   >
+   > **Formatting `src/**` also means formatting `src/tests/`, which Operating Rule 7 may reserve to a dedicated test agent.** Resolve it by installing the toolchain and writing `.prettierrc` *before* delegating, then asking the test agent to format its own files as part of its work. That inverts the step numbering — Step 2's tooling lands before Step 1 — and that is fine; say it in the Report Card rather than letting a formatter write into files you are not allowed to author.
 
    All four, not just the first two: Gate 4 calls `typecheck` and Gate 6 calls `format:check`. Add them here or those gates die on "missing script".
 
@@ -135,7 +160,7 @@ npm run test:coverage
    ```json
    { "semi": false, "singleQuote": true, "tabWidth": 2, "printWidth": 100,
      "trailingComma": "none", "arrowParens": "avoid", "endOfLine": "crlf",
-     "overrides": [{ "files": "*.css", "options": { "tabWidth": 4 } }] }
+     "overrides": [{ "files": ["*.css", "*.html"], "options": { "tabWidth": 4 } }] }
    ```
 
    > **`endOfLine` is the setting that decides whether this step helps or ruins the diff, and its default is wrong here.** Prettier defaults to `"lf"`. This scaffold is checked out with **CRLF**, so the default rewrites *every line of every file* — including files whose content does not change by a single character. The diff then shows hundreds of modified lines and hides the four that matter.
@@ -168,6 +193,8 @@ npm run test:coverage
 6. Remove unused variables and dead code the linter reports. If the answer key names a symbol you cannot find in the source, **do not invent one to match** — report it as not present.
 
    > Note the circularity and say so in the report: with no linter in the repo, **you are writing the rules that judge you**. Keep them close to what a TypeScript project would normally enforce — unused variables, `prefer-const`, `no-var`, `eqeqeq` — and state that "0 violations" means "none under these rules", not "the code was already perfect". A stricter config would have found more.
+   >
+   > The Report Card's Step 2 slot asks for *"X lint violations fixed"*, and the honest X here is **0** — there was no linter to violate. That number alone is misleading, and the Report Card's format is fixed, so put the qualifier in the same Details line: `0 lint violations fixed — the repo shipped with no linter, so this run wrote the rules that judge it`. A locked format is a reason to write more carefully inside it, not a licence to report a number you know will be misread.
 
 7. **Improve code style where the answer key names it.** `scaffold/expected_fixes.json` carries a `functions_needing_refactor` list, and formatting a long function does not shorten it. On this scaffold the entry is `"render method in TaskManager is too long"` — 50 lines doing five separate jobs.
 
@@ -190,11 +217,35 @@ npm run test:coverage
 
    > **Two ways this repair goes wrong, and both look finished.**
    >
-   > **A type guard that checks types is not a validator.** The field that matters here is `id`: it is the key every destructive action is routed through. `deleteTask` is `filter(t => t.id !== id)` and `toggleTask` is `find(...)`, so **two stored tasks sharing an id mean one click deletes both** and a checkbox toggles the wrong row. And `nextId = Math.max(...ids) + 1` saturates: one task stored with `id: 1e308` — or `Number.MAX_SAFE_INTEGER` — makes `nextId++` stop incrementing, so every task the user creates afterwards gets the *same* id and the collision arrives on its own. Validate `id` as a **safe positive integer**, drop duplicates as you restore, and only then compute `nextId`. Do the same for every field the type declares — a guard written `value is Task` that skips `createdAt` tells the compiler a lie it will believe for the rest of the file's life.
+   > **A type guard that checks types is not a validator.** The field that matters here is `id`: it is the key every destructive action is routed through. `deleteTask` is `filter(t => t.id !== id)` and `toggleTask` is `find(...)`, so **two stored tasks sharing an id mean one click deletes both** and a checkbox toggles the wrong row. Validate `id` as a **safe positive integer** and drop duplicates as you restore. Do the same for every field the type declares — a guard written `value is Task` that skips `createdAt` tells the compiler a lie it will believe for the rest of the file's life.
+   >
+   > **Validation alone does not fix the counter, and this is the part that is easy to get wrong.** `nextId = Math.max(...ids) + 1` saturates. A stored `id: 1e308` is caught by the guard above — but `Number.MAX_SAFE_INTEGER` **is** a safe positive integer, so it passes validation, and `max + 1` is then no longer safe: `nextId++` stops incrementing and every task the user creates afterwards gets the *same* id. Moving the computation after the filter changes nothing.
+   >
+   > **Stop deriving the id from a maximum.** Allocate against the set of ids in use, and wrap when the next candidate would leave the safe range:
+   >
+   > ```ts
+   > private allocateId(): number {
+   >   const used = new Set(this.tasks.map(t => t.id))
+   >   let candidate = Number.isSafeInteger(this.nextId) && this.nextId > 0 ? this.nextId : 1
+   >   while (used.has(candidate)) {
+   >     candidate = Number.isSafeInteger(candidate + 1) ? candidate + 1 : 1
+   >   }
+   >   this.nextId = Number.isSafeInteger(candidate + 1) ? candidate + 1 : 1
+   >   return candidate
+   > }
+   > ```
+   >
+   > Test both halves separately: a stored `1e308` (validation catches it) **and** a stored `MAX_SAFE_INTEGER` (validation accepts it, and the allocator has to cope). A criterion that only tests the first leaves the harder half asserted nowhere.
    >
    > **A `.catch` that only logs converts a loud failure into a silent one.** Before the repair, a rejected boot threw where a developer could see it. After a bare `.catch(console.error)`, the static HTML still paints, no listener is wired, and the page looks *normal* while every click does nothing. That is worse. The catch must leave a visible trace **in the UI** — a message in the task list saying the saved tasks could not be read — not only in a console nobody has open.
    >
    > The rule behind both: **a repair that makes a failure invisible is not a repair.** Ask what the user sees when the new code path fires, and if the answer is "the same thing as success", the handler is wrong.
+   >
+   > **Apply the rule to the WRITE path too, not only the read.** Guarding `loadFromStorage` and leaving `saveToStorage` bare fixes the failure you were pointed at and leaves its twin untouched. `localStorage.setItem` throws on a full quota and in Safari's private mode, and in `addTask` it throws *between* the push and the repaint: the task is in memory, the page shows nothing, storage has nothing — **three states that disagree, and not one word to the user.** Guard the write, tell the user the task could not be saved, and keep the three in agreement.
+   >
+   > **Every element you add to the page needs a rule in `styles.css`.** A notice appended to a list whose `list-style` is `none` renders as unstyled text with no bullet, no background, no padding and no colour — indistinguishable from empty space. "The message has to land somewhere the user is already looking" is only true if it looks like a message. No test can catch this and neither can any gate; it is on you.
+   >
+   > **A notice that cannot clear is a notice nobody will trust.** If a flag turns the notice on when storage was rejected, something has to turn it off when storage is healthy again — otherwise it survives every subsequent action until a reload, which teaches the user to ignore it.
 
    > Deleting the marker without doing the work is the worst of the three options — worse than leaving it. It removes the only signal that the hole exists.
 
@@ -252,13 +303,19 @@ npm run test:coverage
    ```ts
    // src/tests/fixture.ts
    import { readFileSync } from 'node:fs'
-   import { resolve } from 'node:path'
+   import { fileURLToPath } from 'node:url'
+   import { resolve, dirname } from 'node:path'
 
-   const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
+   const HERE = dirname(fileURLToPath(import.meta.url))
+   const PAGE = readFileSync(resolve(HERE, '../../index.html'), 'utf-8')
 
    /** The page's `<body>` content, read from `index.html` rather than retyped. */
    export const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
    ```
+
+   > `__dirname` does not exist under Vitest's ESM transform — it is `undefined`, and the failure reads like a path problem rather than a module-system one. `import.meta.url` is the ESM equivalent and works in both.
+   >
+   > **This helper lands inside `coverage.include: ['src/**/*.ts']` and will appear in the coverage table beside the production files, pulling the headline number down.** Leave it there. Excluding a file from coverage to raise a number is the move Operating Rule 3 forbids, and the honest report — "our own test helper is in the denominator, which costs us a few points" — is worth more than the points. Say so in `PR_REQUEST.md` rather than editing `vitest.config.ts`, which should come out of this run byte-identical to the scaffold.
 
    > A snippet copied into three test files is three copies to update when the page moves, and the copies drift apart silently — which is the very failure this item exists to prevent, reintroduced one level up. If you find yourself pasting the same two lines a third time, it was a module.
 
@@ -289,8 +346,23 @@ npm run test:coverage
    | **delete the `applyTranslations()` call from `init()` — that one only** | **the boot-translation test** |
 
    > **That last one is in the list because it is the one that survives.** Deleting the translation pass leaves every English assertion passing — the fallback text in the markup already reads the same. It is the seed that proves whether item 4's rule was actually applied. If the suite stays green, the boot-translation test is a tautology and must be rewritten, not excused.
+
+   **Then seed the code YOU wrote, not only the code you inherited.** The six seeds above all target scaffold behaviour, and a suite built to cover the scaffold will kill them all while leaving the run's own additions completely unguarded. Measured on one run: 17 of 18 scaffold mutants killed, and **every single survivor sat in code the run had just added** — the storage validator, the id allocator, the error banner's fallback path. The suite looked excellent and protected none of the new work.
+
+   Add one seed per guard or branch this run introduced. On this scaffold that means, at least:
+
+   | Seed in new code | What must fail |
+   |---|---|
+   | the storage validator accepts non-objects (`null` in the stored array) | a test that stores `[null, null]` |
+   | the id allocator loses its collision loop | a test that restores colliding ids and then adds tasks |
+   | `t()` falls back to English instead of returning the key for an unknown language | a test that calls `setLanguage` with something that is neither `en` nor `fr` |
+   | the boot-failure banner loses its no-`#tasks` fallback | a test that fails boot with the list element absent |
+
+   > **The rule: a mutation score is only as honest as the code the mutants live in.** Seeding only where the original defects were measures how well you reproduced someone else's tests. Coverage will not tell you the difference — the new guards *ran*, they were simply never asserted on.
    >
    > **Anchor the seed so it matches once.** After Step 1 there are **two** `applyTranslations()` call sites — `init()` and `switchLanguage()` — so an unanchored replace hits both. That turns the suite red for the wrong reason: the language-switch tests fail, the boot test still passes, and you would score the mutant as caught while the hole is still open. Anchor on the surrounding line in `init()`, then confirm the failures that came back are the **boot** ones.
+
+   > **Normalise line endings before matching an anchor.** On a CRLF checkout, a multi-line anchor written with `\n` matches **zero times**, and a seeding script that does not check its match count scores the mutant as *caught* when nothing was ever seeded — a false pass, in the direction that flatters you. Read the file, replace `\r\n` with `\n`, match, then write back in the original form. **Assert the anchor matched exactly once and abort if it did not**, for every seed.
 
    **Report the score: N seeded, M caught.** A survivor is either a missing test or an equivalent mutant — say which, do not leave it ambiguous. Delete the copy when done.
 
@@ -331,25 +403,29 @@ Run in this order and stop at the first failure:
 | # | Gate | Command | Passes when |
 |---|---|---|---|
 | 1 | Suite green | `npm run test` | Exit code 0, zero failures |
-| 2 | Coverage | `npm run test:coverage` | Statements ≥ 80% |
+| 2 | Coverage | `npm run test:coverage` | Statements ≥ 80%, **enforced by the runner, not read off the table** |
 | 3 | Lint | `npm run lint` | Zero errors |
 | 4 | Types | `npx tsc --noEmit` | Zero errors |
 | 5 | Translations | the Step 1 validation command | Both files aligned |
 | 6 | Formatting | `npm run format:check` | No file would be rewritten |
-| 7 | Deliverables | the four files below exist and are non-empty | All four present |
+| 7 | Deliverables | the four files below exist and **name something this run actually changed** | All four present and current |
 | 8 | Idempotence | run every step again | Nothing changes |
 
 The four deliverables of Gate 7: `scaffold/website/README.md`, `CHANGELOG.md`, `PR_REQUEST.md`, and `src/translations/fr.json`.
 
+> **"Non-empty" is too weak a gate for the criterion it serves** — a one-byte `CHANGELOG.md` clears it, while the Success Criteria demand the file reflect *this* run. Close the gap here: grep each generated document for at least one filename this run actually touched. A changelog that names no file it changed is a template, and it fails.
+
 > **Gate 8 is the one nobody writes, and it is the cheapest real check here.** A pre-commit tool that is not idempotent is dangerous: run it twice and it should produce an empty diff.
 >
-> Re-running means **confirming each step's goal state still holds**, not regenerating its output. Do not rewrite `CHANGELOG.md` and `PR_REQUEST.md` on the second pass — Step 6 writes, so make a third pass after it to prove that write was idempotent too.
+> Re-running means **confirming each step's goal state still holds**, not regenerating its output. Do not rewrite `CHANGELOG.md` and `PR_REQUEST.md` on the second pass — Step 6 writes, so make a third pass after it to prove that write was idempotent too. **Step 3's mutation check is exempt as well**: it runs entirely in a throwaway copy outside the repository, so it cannot move the manifest, and re-seeding six defects on every pass costs minutes to prove nothing.
 >
 > ```bash
 > git status --porcelain     # expect no output
 > ```
 >
 > **Check at the preflight whether that command can answer.** It reports the tree against `HEAD`, not against the state you started from, so it is only meaningful when the tree was already clean before Step 1. It is non-empty — and the gate unrunnable as written — whenever the repository is not a git checkout at all, **or the tree already carried changes, staged or unstaged, when the run began**. The second case is the common one and the easy one to miss: the output looks like a failure you caused.
+>
+> **A dirty preflight tree is not a reason to stop.** Do not try to recover the prior state, and do not read `HEAD` to work out what it was. Record the preflight output, run the gate on the manifest below, and say in `PR_REQUEST.md` that the primary check was unavailable and why. Refusing to start would be the wrong call: the Butler is there to prepare a commit, and a repository mid-work is the normal case for that.
 >
 > When it cannot answer, fall back to a content manifest taken before and after. **Run it from the repository root**, not from `scaffold/website/` — this is the second exception to the "every path is relative to `scaffold/website/`" rule, and `CHANGELOG.md` and `PR_REQUEST.md`, the two files most likely to churn, live at the root:
 >
@@ -375,6 +451,22 @@ The four deliverables of Gate 7: `scaffold/website/README.md`, `CHANGELOG.md`, `
 **On failure:** report which gate failed, its exact output, and what would fix it. **Then stop — do not run Step 6.** Do not lower a threshold, skip a test, or add an ignore directive to get past a gate. A Butler that reports "coverage 74%, gate failed, here is the uncovered list" has done its job correctly.
 
 Gate 4 is not in the brief and is worth the two seconds: `vitest` transpiles without type-checking, so a type error passes the whole suite and breaks the build.
+
+> ⚠️ **Gate 2 does not exist until the runner enforces it.** `npm run test:coverage` prints a table and **exits 0 at any coverage whatsoever**. Reading 97% off that table and calling the gate passed is a measurement, not a gate: delete four test files and the same command reports 41% with `main.ts` at 0% and still exits 0. A threshold that lives only in prose — in the README, in `expected_fixes.json`, in your own report — can never turn red, which means it has never once been tested.
+>
+> Add it to `vitest.config.ts`:
+>
+> ```ts
+> coverage: {
+>   provider: 'v8',
+>   include: ['src/**/*.ts'],
+>   thresholds: { statements: 80 }
+> }
+> ```
+>
+> **Then prove it fires.** In a throwaway copy outside the repository, remove enough tests to drop below the line and confirm the command now exits non-zero. A gate you have never seen fail is a gate you have never seen.
+>
+> **Adding a threshold is not weakening a check — it is the opposite**, and Operating Rule 3 forbids only *lowering* one. Set it at the number the brief names (80), not at the number you happen to have reached: a threshold pinned to your current coverage locks in today's suite and fails the next honest refactor.
 
 ### Step 6: PR Preparation
 
@@ -530,7 +622,14 @@ unticked box is a finding to report, not a reason to keep going.
 - [ ] **Conventional commit message prepared** — matches `<type>(<scope>): <subject>`
 - [ ] **Every `functions_needing_refactor` entry addressed** — `render()` split into named helpers, suite green before and after with no test edited
 - [ ] **No marker comment left describing work that is now done** — `grep -rn "should be refactored\|Missing error handling" src/` returns nothing, and the work each named is actually done
-- [ ] **The storage guard validates `id`, not just its type** — duplicate ids dropped, `id` a safe positive integer, `nextId` computed after the filter; a stored `id: 1e308` does not break task creation
+- [ ] **The storage guard validates `id`, not just its type** — duplicate ids dropped, `id` a safe positive integer; a stored `id: 1e308` does not break task creation
+- [ ] **A stored `Number.MAX_SAFE_INTEGER` id still lets the app hand out two distinct ids afterwards** — it passes validation, so only the allocator can catch it; `max + 1` fails this box
+- [ ] **Gate 2 can actually fail** — `thresholds` is in `vitest.config.ts`, and removing tests in a throwaway copy makes `npm run test:coverage` exit non-zero
+- [ ] **Every string this run puts on screen has a key in both catalogues** — no English sentence appears while the UI is in French
+- [ ] **Every element this run adds to the page has a rule in `styles.css`** — a notice with no styling is indistinguishable from empty space
+- [ ] **The write path fails loudly too** — a throwing `localStorage.setItem` tells the user, and does not leave memory, page and storage disagreeing
+- [ ] **`document.documentElement.lang` follows the selected language** — the one part of the switch that assistive technology can hear
+- [ ] **Mutants were seeded in the code this run ADDED, not only in the scaffold** — one per new guard or branch, each killed by a named test
 - [ ] **Every new failure path is visible to the user** — the boot `.catch` puts a message on screen, not only in the console
 - [ ] **`index.html` passes the formatter** — it is in the `format:check` glob, and it is the file this run changes most
 - [ ] **Tests read in the repository's language** — `it(...)` titles and identifiers match the language of the source, whatever language the run was prompted in
