@@ -5,5 +5,13 @@
   "printWidth": 100,
   "trailingComma": "none",
   "arrowParens": "avoid",
-  "endOfLine": "crlf"
+  "endOfLine": "crlf",
+  "overrides": [
+    {
+      "files": "*.css",
+      "options": {
+        "tabWidth": 4
+      }
+    }
+  ]
 }

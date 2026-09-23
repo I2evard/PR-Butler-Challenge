@@ -1,132 +1,122 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { applyTranslations, getCurrentLanguage, loadTranslations, setLanguage, t } from '../i18n'
-
 /*
- * SCENARIOS - i18n
- *
- *  1. loadTranslations() resolves without throwing
- *  2. t() returns the English wording by default
- *  3. After setLanguage('fr'), t() returns the French wording
- *  4. An unknown key is returned as-is, not as an empty string
- *  5. An unknown language falls back to returning the key itself
- *  6. getCurrentLanguage() reports the language last set
- *  7. applyTranslations() rewrites the text of every [data-i18n] element
- *  8. applyTranslations() rewrites the placeholder of every [data-i18n-placeholder] element
- *  9. applyTranslations() re-renders the same DOM in French after a language switch
- * 10. applyTranslations() leaves an element whose data-i18n key is unknown showing that key
- * 11. applyTranslations() scoped to a root ignores elements outside that root
- * 12. applyTranslations() defaults to the whole document when no root is given
+ * SCENARIOS - module de traduction (i18n)
+ *  1. Sans rien changer, l'application parle anglais
+ *  2. Apres avoir choisi le francais, les memes cles rendent les libelles francais
+ *  3. La langue courante est consultable et reflete le dernier choix
+ *  4. Une cle inconnue rend la cle elle-meme, jamais une chaine vide
+ *  5. Une langue inconnue retombe sur la cle plutot que de planter
+ *  6. Le chargement des traductions se termine sans erreur
+ *  7. Traduire une portion de page reecrit le texte des elements marques
+ *  8. Traduire une portion de page reecrit le texte de remplacement des champs de saisie
+ *  9. Traduire sans preciser de portion traite la page entiere
+ * 10. Un element marque d'une cle inconnue affiche la cle, ce qui rend l'oubli visible
  */
+import { describe, it, expect, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { loadTranslations, setLanguage, t, getCurrentLanguage, applyTranslations } from '../i18n'
+
+const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
+const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
+
+function racineApplicative(): HTMLElement {
+  const racine = document.createElement('div')
+  racine.innerHTML = APP_MARKUP
+  return racine
+}
 
 describe('i18n', () => {
   beforeEach(() => {
+    localStorage.clear()
     setLanguage('en')
     document.body.innerHTML = ''
   })
 
-  afterEach(() => {
-    setLanguage('en')
-  })
-
-  // Scenario 1
-  it('resolves loadTranslations without throwing', async () => {
-    await expect(loadTranslations()).resolves.toBeUndefined()
-  })
-
-  // Scenario 2
-  it('translates into English by default', () => {
+  it('scenario 1 - rend les libelles anglais par defaut', () => {
     expect(t('app.title')).toBe('My Task Manager')
     expect(t('button.delete')).toBe('Delete')
+    expect(t('footer.text')).toBe('Built with TypeScript')
   })
 
-  // Scenario 3
-  it('translates into French once the language is switched', () => {
+  it('scenario 2 - rend les libelles francais apres passage au francais', () => {
     setLanguage('fr')
-
     expect(t('app.title')).toBe('Mon Gestionnaire de Tâches')
+    expect(t('task.placeholder')).toBe('Saisir la description de la tâche')
+    expect(t('priority.high')).toBe('Priorité élevée')
     expect(t('button.delete')).toBe('Supprimer')
+    expect(t('stats.total')).toBe('Total des tâches')
+    expect(t('footer.text')).toBe('Conçu avec TypeScript')
   })
 
-  // Scenario 4
-  it('returns the key itself when the key is unknown', () => {
-    expect(t('no.such.key')).toBe('no.such.key')
+  it('scenario 3 - expose la langue courante', () => {
+    expect(getCurrentLanguage()).toBe('en')
+    setLanguage('fr')
+    expect(getCurrentLanguage()).toBe('fr')
   })
 
-  // Scenario 5
-  it('returns the key itself when the language is unknown', () => {
+  it('scenario 4 - rend la cle elle-meme quand la cle est inconnue', () => {
+    expect(t('cle.inexistante')).toBe('cle.inexistante')
+    setLanguage('fr')
+    expect(t('cle.inexistante')).toBe('cle.inexistante')
+  })
+
+  it('scenario 5 - rend la cle elle-meme quand la langue est inconnue', () => {
     setLanguage('de')
-
     expect(t('app.title')).toBe('app.title')
   })
 
-  // Scenario 6
-  it('reports the current language', () => {
-    expect(getCurrentLanguage()).toBe('en')
-
-    setLanguage('fr')
-    expect(getCurrentLanguage()).toBe('fr')
-
-    setLanguage('en')
-    expect(getCurrentLanguage()).toBe('en')
+  it('scenario 6 - le chargement des traductions se termine', async () => {
+    await expect(loadTranslations()).resolves.toBeUndefined()
   })
 
-  // Scenarios 7, 8 and 9
-  it('rewrites text and placeholders, then re-renders them in French', () => {
-    const root = document.createElement('div')
-    root.innerHTML =
-      '<h1 data-i18n="app.title">placeholder</h1>' +
-      '<button data-i18n="button.add">placeholder</button>' +
-      '<input data-i18n-placeholder="task.placeholder" placeholder="placeholder" />'
-
-    applyTranslations(root)
-
-    expect(root.querySelector('h1')?.textContent).toBe('My Task Manager')
-    expect(root.querySelector('button')?.textContent).toBe('Add Task')
-    expect(root.querySelector('input')?.getAttribute('placeholder')).toBe('Enter task description')
-
+  it('scenario 7 - reecrit le texte des elements marques dans la portion fournie', () => {
+    const racine = racineApplicative()
     setLanguage('fr')
-    applyTranslations(root)
 
-    expect(root.querySelector('h1')?.textContent).toBe('Mon Gestionnaire de Tâches')
-    expect(root.querySelector('button')?.textContent).toBe('Ajouter la tâche')
-    expect(root.querySelector('input')?.getAttribute('placeholder')).toBe(
-      'Saisir la description de la tâche'
+    applyTranslations(racine)
+
+    expect(racine.querySelector('h1')?.textContent).toBe('Mon Gestionnaire de Tâches')
+    expect(racine.querySelector('[data-i18n="stats.total"]')?.textContent).toBe('Total des tâches')
+    expect(racine.querySelector('[data-i18n="footer.text"]')?.textContent).toBe(
+      'Conçu avec TypeScript'
     )
+    expect(document.body.innerHTML).toBe('')
   })
 
-  // Scenario 10
-  it('shows the key when a data-i18n element points at an unknown key', () => {
-    const root = document.createElement('div')
-    root.innerHTML = '<p data-i18n="nope.missing">original</p>'
+  it('scenario 8 - reecrit le texte de remplacement des champs marques', () => {
+    const racine = racineApplicative()
+    setLanguage('fr')
 
-    applyTranslations(root)
+    applyTranslations(racine)
 
-    expect(root.querySelector('p')?.textContent).toBe('nope.missing')
+    const champ = racine.querySelector('#task-input') as HTMLInputElement
+    expect(champ.placeholder).toBe('Saisir la description de la tâche')
   })
 
-  // Scenario 11
-  it('only touches elements inside the given root', () => {
-    document.body.innerHTML =
-      '<div id="inside"><h1 data-i18n="app.title">before</h1></div>' +
-      '<h2 data-i18n="task.add">untouched</h2>'
-
-    applyTranslations(document.getElementById('inside') as ParentNode)
-
-    expect(document.querySelector('#inside h1')?.textContent).toBe('My Task Manager')
-    expect(document.querySelector('h2')?.textContent).toBe('untouched')
-  })
-
-  // Scenario 12
-  it('defaults to the whole document when no root is given', () => {
-    document.body.innerHTML =
-      '<h1 data-i18n="app.title">before</h1>' +
-      '<input id="field" data-i18n-placeholder="task.placeholder" placeholder="before" />'
+  it('scenario 9 - traite la page entiere quand aucune portion n est fournie', () => {
+    document.body.innerHTML = APP_MARKUP
+    setLanguage('fr')
 
     applyTranslations()
 
-    expect(document.querySelector('h1')?.textContent).toBe('My Task Manager')
-    expect(document.getElementById('field')?.getAttribute('placeholder')).toBe(
-      'Enter task description'
-    )
+    expect(document.querySelector('h1')?.textContent).toBe('Mon Gestionnaire de Tâches')
+    const champ = document.getElementById('task-input') as HTMLInputElement
+    expect(champ.placeholder).toBe('Saisir la description de la tâche')
+  })
+
+  it('scenario 10 - affiche la cle quand un element porte une cle inconnue', () => {
+    const racine = document.createElement('div')
+    const libelle = document.createElement('span')
+    libelle.setAttribute('data-i18n', 'cle.jamais.traduite')
+    libelle.textContent = 'texte d origine'
+    const champ = document.createElement('input')
+    champ.setAttribute('data-i18n-placeholder', 'autre.cle.absente')
+    racine.appendChild(libelle)
+    racine.appendChild(champ)
+
+    applyTranslations(racine)
+
+    expect(libelle.textContent).toBe('cle.jamais.traduite')
+    expect(champ.placeholder).toBe('autre.cle.absente')
   })
 })

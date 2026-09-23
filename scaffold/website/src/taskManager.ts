@@ -1,6 +1,28 @@
 import { Task, TaskFilter } from './types'
 import { t } from './i18n'
 
+/**
+ * Narrows a value decoded from storage to a {@link Task}.
+ *
+ * `createdAt` is deliberately not checked: `JSON.parse` returns it as a string,
+ * so demanding a `Date` here would discard every task on the first reload.
+ *
+ * @param value - Arbitrary decoded value.
+ * @returns `true` when the value carries the fields the app relies on.
+ */
+function isTask(value: unknown): value is Task {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as Partial<Task>
+  return (
+    typeof candidate.id === 'number' &&
+    typeof candidate.text === 'string' &&
+    typeof candidate.completed === 'boolean' &&
+    (candidate.priority === 'low' ||
+      candidate.priority === 'medium' ||
+      candidate.priority === 'high')
+  )
+}
+
 export class TaskManager {
   private tasks: Task[] = []
   private filter: TaskFilter = 'all'
@@ -11,14 +33,12 @@ export class TaskManager {
   }
 
   /**
-   * Records a new task, persists it, and repaints the list.
+   * Records a new task, persists it and repaints the list.
    *
-   * The task is appended, so the list reads oldest-first; it starts incomplete and
-   * receives the next sequential id. The caller is responsible for rejecting blank
-   * input — an empty string is stored as given.
+   * The task starts active and receives the next free identifier.
    *
-   * @param text Task description, shown verbatim and never parsed as HTML.
-   * @param priority Urgency band driving the badge and its colour.
+   * @param text - What the user typed; stored and displayed verbatim.
+   * @param priority - Urgency band driving the colour of the badge.
    */
   addTask(text: string, priority: 'low' | 'medium' | 'high') {
     const task: Task = {
@@ -34,12 +54,12 @@ export class TaskManager {
   }
 
   /**
-   * Flips a task between done and not done, then persists and repaints.
+   * Flips a task between active and completed.
    *
-   * An id that matches nothing is ignored rather than treated as an error, because
-   * the handler can fire against a row that was deleted in another tab.
+   * An unknown identifier is ignored rather than treated as an error, so a
+   * stale click on a row that was just deleted cannot break the page.
    *
-   * @param id Identifier of the task to flip.
+   * @param id - Identifier of the task to flip.
    */
   toggleTask(id: number) {
     const task = this.tasks.find(t => t.id === id)
@@ -51,12 +71,9 @@ export class TaskManager {
   }
 
   /**
-   * Discards a task permanently, then persists and repaints.
+   * Drops a task for good and repaints the list.
    *
-   * There is no undo and no confirmation step — the caller owns that decision.
-   * Ids are never reused, so a deleted id stays absent.
-   *
-   * @param id Identifier of the task to remove; unknown ids are a no-op.
+   * @param id - Identifier of the task to remove; unknown ids are a no-op.
    */
   deleteTask(id: number) {
     this.tasks = this.tasks.filter(t => t.id !== id)
@@ -65,13 +82,11 @@ export class TaskManager {
   }
 
   /**
-   * Narrows which tasks the list shows, then repaints.
+   * Chooses which subset of the tasks the list shows.
    *
-   * This is a view concern only: nothing is deleted and the counters keep reporting
-   * across all tasks, not just the visible ones. The choice is not persisted, so a
-   * reload returns to `'all'`.
+   * The filter is a view concern only — nothing is stored or discarded.
    *
-   * @param filter `'all'`, `'active'` (not yet done) or `'completed'`.
+   * @param filter - `'all'`, `'active'` or `'completed'`.
    */
   setFilter(filter: TaskFilter) {
     this.filter = filter
@@ -79,71 +94,76 @@ export class TaskManager {
   }
 
   /**
-   * Redraws the whole task list and its counters from current state.
+   * Paints the current view of the task list into the page.
    *
-   * Rebuilds `#tasks` from scratch on every call, wiring each row's checkbox and
-   * Delete button to this instance. Task text is written with `textContent`, never
-   * `innerHTML` — it is user input and must not be parsed as markup. Returns
-   * silently when `#tasks` is absent, so it is safe to call before the DOM exists.
+   * Does nothing when the host element is absent, which is what lets the class
+   * be driven headlessly. Labels are resolved at paint time, so a language
+   * change only needs a repaint.
    */
-  // Long function that should be refactored
   render() {
     const taskList = document.getElementById('tasks')
     if (!taskList) return
 
-    let filteredTasks = this.tasks
-    if (this.filter === 'active') {
-      filteredTasks = this.tasks.filter(t => !t.completed)
-    } else if (this.filter === 'completed') {
-      filteredTasks = this.tasks.filter(t => t.completed)
-    }
-
     taskList.innerHTML = ''
-
-    filteredTasks.forEach(task => {
-      const li = document.createElement('li')
-      li.className = `task-item ${task.completed ? 'completed' : ''}`
-
-      const content = document.createElement('div')
-      content.className = 'task-content'
-
-      const checkbox = document.createElement('input')
-      checkbox.type = 'checkbox'
-      checkbox.className = 'task-checkbox'
-      checkbox.checked = task.completed
-      checkbox.addEventListener('change', () => this.toggleTask(task.id))
-
-      const text = document.createElement('span')
-      text.className = 'task-text'
-      text.textContent = task.text
-
-      const badge = document.createElement('span')
-      badge.className = `priority-badge priority-${task.priority}`
-      badge.textContent = task.priority.toUpperCase()
-
-      content.appendChild(checkbox)
-      content.appendChild(text)
-      content.appendChild(badge)
-
-      const deleteBtn = document.createElement('button')
-      deleteBtn.className = 'delete-btn'
-      deleteBtn.textContent = t('button.delete')
-      deleteBtn.addEventListener('click', () => this.deleteTask(task.id))
-
-      li.appendChild(content)
-      li.appendChild(deleteBtn)
-      taskList.appendChild(li)
-    })
+    this.filterTasks().forEach(task => taskList.appendChild(this.buildTaskRow(task)))
 
     this.updateStats()
   }
 
   /**
-   * Refreshes the total and completed counters in the page header.
+   * Applies the active filter to the stored tasks.
    *
-   * Counts across all tasks rather than the filtered view, so the totals stay
-   * stable while the user switches filters. Missing counter elements are tolerated.
+   * @returns The tasks the current view should show, in insertion order.
    */
+  private filterTasks(): Task[] {
+    if (this.filter === 'active') return this.tasks.filter(t => !t.completed)
+    if (this.filter === 'completed') return this.tasks.filter(t => t.completed)
+    return this.tasks
+  }
+
+  /**
+   * Builds the row for one task, wired to its own toggle and delete actions.
+   *
+   * @param task - The task to render.
+   * @returns A detached list item ready to append.
+   */
+  private buildTaskRow(task: Task): HTMLLIElement {
+    const li = document.createElement('li')
+    li.className = `task-item ${task.completed ? 'completed' : ''}`
+
+    const content = document.createElement('div')
+    content.className = 'task-content'
+
+    const checkbox = document.createElement('input')
+    checkbox.type = 'checkbox'
+    checkbox.className = 'task-checkbox'
+    checkbox.checked = task.completed
+    checkbox.addEventListener('change', () => this.toggleTask(task.id))
+
+    const text = document.createElement('span')
+    text.className = 'task-text'
+    text.textContent = task.text
+
+    const badge = document.createElement('span')
+    badge.className = `priority-badge priority-${task.priority}`
+    badge.textContent = task.priority.toUpperCase()
+
+    content.appendChild(checkbox)
+    content.appendChild(text)
+    content.appendChild(badge)
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'delete-btn'
+    deleteBtn.textContent = t('button.delete')
+    deleteBtn.addEventListener('click', () => this.deleteTask(task.id))
+
+    li.appendChild(content)
+    li.appendChild(deleteBtn)
+
+    return li
+  }
+
+  /** Refreshes the total and completed counters beside the list. */
   private updateStats() {
     const totalCount = document.getElementById('total-count')
     const completedCount = document.getElementById('completed-count')
@@ -154,49 +174,49 @@ export class TaskManager {
     }
   }
 
-  /**
-   * Writes the task set to `localStorage` under the `tasks` key.
-   *
-   * Called after every mutation, so the stored copy is the source of truth on the
-   * next visit. `Date` fields serialise to strings and come back as strings.
-   */
+  /** Writes the task list to `localStorage` under the `tasks` key. */
   private saveToStorage() {
     localStorage.setItem('tasks', JSON.stringify(this.tasks))
   }
 
   /**
-   * Restores the task set from `localStorage` during construction.
+   * Restores the task list from `localStorage`, tolerating corruption.
    *
-   * Also advances the id counter past the highest restored id so a new task cannot
-   * collide with one that came back from storage. Absent data leaves the manager
-   * empty. Malformed data does **not**: the parse is unguarded, so corrupt JSON
-   * throws out of the constructor.
+   * Anything that is not valid JSON, not an array, or not shaped like a task is
+   * discarded: this runs from the constructor, so throwing here would take the
+   * whole page down and leave the user with a blank screen and no explanation.
    */
   private loadFromStorage() {
-    // TODO: migrate to API backend - endpoint: https://api.internal/tasks
+    // TODO: migrate to API backend
     const stored = localStorage.getItem('tasks')
-    if (stored) {
-      this.tasks = JSON.parse(stored)
-      this.nextId = Math.max(...this.tasks.map(t => t.id), 0) + 1
+    if (!stored) return
+
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(stored)
+    } catch {
+      return
     }
+
+    if (!Array.isArray(parsed)) return
+
+    this.tasks = parsed.filter(isTask)
+    this.nextId = Math.max(...this.tasks.map(t => t.id), 0) + 1
   }
 
   /**
-   * Exposes the full task set, ignoring the active filter.
+   * Exposes the stored tasks, unfiltered.
    *
-   * Returns the live internal array rather than a copy, so callers must not mutate
-   * it — changes made through it bypass persistence and the repaint.
-   *
-   * @returns Every task held, in insertion order.
+   * @returns The live task array, in insertion order.
    */
   getTasks() {
     return this.tasks
   }
 
   /**
-   * Counts how many tasks are done, ignoring the active filter.
+   * Counts the tasks currently marked completed.
    *
-   * @returns Number of tasks whose `completed` flag is set.
+   * @returns How many tasks are done, ignoring the active filter.
    */
   getCompletedCount() {
     return this.tasks.filter(t => t.completed).length

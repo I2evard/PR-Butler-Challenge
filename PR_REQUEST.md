@@ -2,175 +2,146 @@
 
 ## Summary
 
-This branch takes `scaffold/website` from "does not build a test run" to ship-ready.
+The task manager shipped with a stored XSS hole, a secret in a comment, a French
+locale that was 12 keys short and never reached the screen anyway, and two
+functions with no test at all. This PR closes all of it.
 
-The headline item is a **stored cross-site scripting hole**: `render()` wrote
-user-supplied task text into the page with `innerHTML`, so anything typed into the task
-field was parsed as markup — and because tasks are persisted in `localStorage`, the
-payload re-fired on every subsequent page load. It now uses `textContent`. A second
-security item, a `temp auth:` credential sitting in a source comment next to an internal
-API endpoint, has been deleted. Neither of these appears in `scaffold/expected_fixes.json`.
+The two defects worth a reviewer's attention first are **not** in
+`scaffold/expected_fixes.json`, and a cleanup that only chased the listed items
+would have shipped both:
 
-The French locale was **half-built in two independent ways**, and fixing only one would
-have looked like success while changing nothing a user sees. `fr.json` carried 2 of the
-14 catalogue keys, so 12 were missing; separately, `switchLanguage()` moved the highlight
-between the two language buttons and returned without ever calling `t()` — a comment on
-its last line admitted as much. A fully populated `fr.json` would still have rendered
-English. Both halves are fixed: the catalogue is complete, and `applyTranslations()` now
-rewrites the marked-up DOM whenever the language changes.
+1. **Stored XSS** — `render()` wrote task text into the DOM with `innerHTML`.
+   Any user who typed markup got it executed, on every render, for every later
+   visit, because the text is persisted. Now `textContent`.
+2. **A credential in a comment** — a `temp auth:` token beside an internal API
+   endpoint in `loadFromStorage()`. Removed from the source. **It remains in the
+   git history, so the token should be treated as exposed and rotated.**
 
-The suite could not run at all before this branch — `vitest.config.ts` declared
-`environment: 'jsdom'` while `package.json` did not depend on `jsdom`, so `npm run test`
-aborted with `MISSING DEPENDENCY`. Baseline coverage was therefore not "low", it was
-unobtainable until that was installed.
+Beyond that:
+
+- **The French locale did nothing.** `switchLanguage()` moved the active button
+  and returned — `t()` was never called on any element, so a complete `fr.json`
+  still rendered English. The 12 missing keys are added *and* wired:
+  12 `data-i18n` attributes plus 1 `data-i18n-placeholder` in `index.html`, a new
+  `applyTranslations()` in `i18n.ts`, called from `init()` and `switchLanguage()`.
+- **A crash on corrupt storage.** `loadFromStorage()` called `JSON.parse`
+  unguarded from the constructor, so a hand-edited `localStorage` entry threw and
+  left the user a blank page with nothing to explain it. Now guarded, with
+  malformed entries discarded and a `.catch` on the `init()` call.
+- **`render()` was 50 lines doing five jobs.** Split into `filterTasks()` and
+  `buildTaskRow()`, leaving `render()` a short orchestrator. Behaviour-preserving:
+  the suite was green before and after and **no test was edited**.
+- **No formatter, no linter.** Neither existed in the project. Prettier and
+  ESLint added, configured to match the code already in the repo.
+
+Two strings stay in English on purpose: the "Your Tasks" heading and the priority
+badge. Neither has a key in `en.json`, and inventing one would put a string in the
+catalogue that nobody asked for.
 
 ## Metrics
 
 | | Before | After |
 |---|---|---|
-| Statements | **26.02%** | **100%** |
-| Branches | 69.23% | 100% |
-| Functions | 57.14% | 100% |
-| Lines | 26.02% | 100% |
-| Tests | 2 | **42** |
-| Test files | 1 | 4 |
-| Lint errors | n/a — no linter in the project | 0 across 5 files |
-| Translation keys in `fr.json` | 2 of 14 | 14 of 14 |
+| Statement coverage | 26.02% | **99.49%** |
+| Branch coverage | 69.23% | 98.52% |
+| Function coverage | 57.14% | 100% |
+| Test cases | 2 | **49** (+47) |
+| Test files | 1 | 5 |
+| Lint errors | n/a (no linter) | 0 across 9 files |
+| French keys | 2 of 14 | 14 of 14 |
 
-Baseline measured at the preflight, immediately after installing `jsdom` and before any
-source change. For the curious: coverage read 32.18% after Steps 1 and 2, before any test
-was written — the cleanup alone moves the number, which is why the baseline is the
-preflight figure and not a later one.
+Coverage by file after the change: `i18n.ts` 100%, `taskManager.ts` 100%,
+`main.ts` 97.87%. The only uncovered statements are the body of the `.catch` on
+`init()`.
 
-Coverage is reported over `src/**/*.ts`. `src/types.ts` does not appear in the table
-because it contains only interfaces and type aliases — zero runtime statements.
+**Files touched:** 16, plus `package-lock.json`.
+8 modified (`index.html`, `package.json`, `README.md`, `styles.css`, `i18n.ts`,
+`main.ts`, `taskManager.ts`, `fr.json`), 8 added (`.prettierrc`,
+`eslint.config.js`, 4 test files, `CHANGELOG.md`, `PR_REQUEST.md`).
 
-## The coverage number is not the evidence
+## Does the suite actually catch anything?
 
-100% statement coverage says every line executed, not that any assertion would notice a
-line going wrong. The suite was therefore checked by seeding defects into a throwaway
-copy of `src/` outside the repository and confirming a **named** test dies for each.
+Coverage says which lines ran, never whether an assertion would notice them going
+wrong. Six defects were seeded one at a time into a throwaway copy of `src/`
+outside the repository:
 
-**Score: 5 seeded, 5 caught. No survivors.**
-
-| Seeded defect | Caught by |
+| Seeded defect | Result |
 |---|---|
-| `textContent` → `innerHTML` in `render()` | `never turns task text into live markup` |
-| `toggleTask` always sets `completed = true` | `returns a task to not-completed when toggled twice` |
-| active/completed filters swapped | `shows only the incomplete task under the active filter` (+2 more) |
-| `saveToStorage` made a no-op | `restores the saved tasks into a freshly constructed manager` (+3 more) |
-| `t()` returns `''` instead of the key | `returns the key itself when the key is unknown` (+2 more) |
+| `textContent` → `innerHTML` in the task row | caught — XSS regression test |
+| `toggleTask` always sets `completed = true` | caught — toggle-twice test |
+| active/completed filters swapped | caught — 3 filter tests |
+| `saveToStorage` made a no-op | caught — storage round-trip test |
+| `t()` returns `''` instead of the key | caught — 3 fallback tests |
+| `applyTranslations()` deleted from `init()` | caught — 2 boot-translation tests |
 
-Each mutant took down only the tests that should care about it — the other 38–41 stayed
-green — so these are targeted assertions, not a suite that collapses on any change. The
-throwaway copy has been deleted.
+**6 seeded, 6 caught, 0 survivors.** The last one matters most: the English text
+is already in the markup as fallback, so an English assertion after boot would
+pass even with the translation pass deleted entirely. The boot tests use a
+sentinel fixture instead, and they do go red.
 
 ## Checklist
 
-- [x] All 14 French translation keys present in `fr.json` — validation command exits 0, both directions checked
-- [x] Code formatted consistently — `npm run format:check` reports no file would be rewritten
-- [x] No lint violations — `npm run lint` → 0 errors over 5 files
-- [x] Test coverage ≥ 80% — measured 100% statements
-- [x] All tests pass — 42/42, exit code 0
-- [x] No type errors — `npx tsc --noEmit` exit code 0
-- [x] TSDoc on every exported function and public method — 19 blocks across the three modules
+- [x] All 14 French keys present in `fr.json`, both catalogues aligned, same order
+- [x] Translations reach the DOM (12 `data-i18n` + 1 `data-i18n-placeholder`)
+- [x] Code formatted — `npm run format:check` rewrites nothing
+- [x] No lint violations — `npm run lint`, 0 errors over 9 files
+- [x] Statement coverage ≥ 80% — 99.49%
+- [x] All tests pass — 49/49
+- [x] No type errors — `npm run typecheck`
+- [x] TSDoc on the whole public surface (16 functions and methods)
 - [x] `README.md` has Features, Testing and Contributing
-- [x] `CHANGELOG.md` generated, reflecting this run
-- [x] `PR_REQUEST.md` generated with measured coverage
-- [x] Conventional commit message prepared
-- [x] No check was weakened to pass — no lowered threshold, no deleted or skipped test, no ignore directive
-- [x] The suite catches seeded defects — 5/5, no survivors
-- [x] A second full run changes nothing — verified by content hash over the tree
-- [x] No gate passed vacuously — the linter named 5 files, the suite ran 42 cases against a baseline of 2
-
-## Files touched
-
-**Modified**
-
-- `scaffold/website/src/taskManager.ts` — XSS fix, credential removed, translated Delete label, TSDoc, reformatted
-- `scaffold/website/src/main.ts` — translation wiring in `init()` and `switchLanguage()`, TSDoc, reformatted
-- `scaffold/website/src/i18n.ts` — new `applyTranslations()`, TSDoc
-- `scaffold/website/src/translations/fr.json` — 12 keys added, order matching `en.json`
-- `scaffold/website/index.html` — 12 `data-i18n` + 1 `data-i18n-placeholder`
-- `scaffold/website/src/styles.css` — formatting only
-- `scaffold/website/package.json` — `jsdom` + toolchain; `format`, `format:check`, `lint` scripts
-- `scaffold/website/package-lock.json` — dependency install
-- `scaffold/website/README.md` — Features, Testing, Contributing
-
-**Added**
-
-- `scaffold/website/.prettierrc`, `scaffold/website/eslint.config.js`
-- `scaffold/website/src/tests/taskManagerBehaviour.test.ts` (21), `i18n.test.ts` (10), `main.test.ts` (9)
-- `CHANGELOG.md`, `PR_REQUEST.md`
-
-**Deliberately unchanged** — `src/types.ts`, `src/tests/taskManager.test.ts` (its 2 original
-tests kept intact), `vite.config.ts`, `vitest.config.ts`, `tsconfig.json`.
+- [x] `CHANGELOG.md` generated from this run
+- [x] `render()` refactor done, suite green before and after, no test edited
+- [x] No marker comment left describing work that is now done
+- [x] Stored XSS fixed; credential removed
+- [x] No check was weakened — no lowered threshold, no deleted test, no ignore directive
+- [x] Suite catches seeded defects — 6 of 6
+- [x] Nothing committed or pushed
 
 ## Reviewer notes
 
-- **`endOfLine` is set to `crlf`** in `.prettierrc`. This checkout uses CRLF and Prettier
-  defaults to LF; without the override the first format pass rewrites every line of every
-  file and buries the real changes. `src/types.ts` was verified byte-identical afterwards.
-- **The linter is new, so it is grading rules written in this same change.** "0 violations"
-  means none under `@typescript-eslint/no-unused-vars`, `prefer-const`, `no-var` and
-  `eqeqeq` plus the two recommended sets — not that the code is perfect. A stricter config
-  would find more.
-- **`expected_fixes.json` names an unused variable `unusedVariable`.** No such symbol
-  exists in the source and none was invented. It could not exist: `tsconfig.json` sets
-  `noUnusedLocals` and `noUnusedParameters`, and `tsc --noEmit` passes.
-- **Three strings stay in English by design** — the `<title>`, the "Your Tasks" heading and
-  the priority badge have no key in `en.json`. The language buttons keep reading "English"
-  and "Français"; language names belong in their own language.
-- **The removed credential must still be rotated.** Deleting the line clears the working
-  tree, not the history.
+- **Rotate the token** that was in `taskManager.ts`. Deleting the line does not
+  remove it from history.
+- **`.prettierrc` sets `endOfLine: "crlf"`** because the repository is checked
+  out with CRLF. The Prettier default (`lf`) would rewrite every line of every
+  file and bury this diff. It also carries a `*.css` override at `tabWidth: 4`
+  to match `styles.css`; without it, that file reindents by 236 lines it does
+  not otherwise change.
+- **`scaffold/expected_fixes.json` lists an unused variable `unusedVariable`.**
+  No such symbol exists anywhere in the source. It was reported rather than
+  invented to match the answer key.
+- **"0 lint violations" means "none under the rules in `eslint.config.js`"**, and
+  those rules were written in the same pass as the code they judge. They stay
+  close to what a TypeScript project normally enforces — unused variables,
+  `prefer-const`, `no-var`, `eqeqeq`. A stricter config would have found more.
+- **Not fixed, reported instead:** `Task.createdAt` is typed `Date`, but
+  `JSON.parse` restores it as a string, so a reloaded task carries a string in a
+  `Date` field. Nothing reads it today. It is outside the scope of this PR and
+  wants its own change.
 
-## Known issues, reported rather than silently fixed
-
-These are real but out of scope for this change, and locking them into a test would freeze
-behaviour nobody has arbitrated:
-
-- `createdAt` survives the `localStorage` round trip as a **string**, not a `Date`. Nothing
-  reads it today, so nothing breaks yet.
-- `loadFromStorage()` calls `JSON.parse` with no guard. Corrupted storage throws inside the
-  constructor and takes the whole app down.
-- `handleSubmit()` decides with `input.value.trim()` but stores `input.value`, so leading
-  and trailing whitespace is persisted.
-
-## Prepared commit message
+## Commit message
 
 ```
 fix(scaffold): repair stored XSS and complete the French locale
 
-render() wrote user-supplied task text with innerHTML, so markup typed
-into the task field was parsed as HTML. Because tasks persist in
-localStorage, the payload re-fired on every later page load. Use
-textContent instead; task text is never markup in this app.
+Task text was written to the DOM with innerHTML, so user-supplied
+markup executed on every render and persisted across visits. It now
+goes through textContent. A temp auth token sitting beside an internal
+endpoint in a comment was removed; it remains in git history and should
+be rotated.
 
-Also remove a temp auth credential left in a comment in
-loadFromStorage() beside an internal API endpoint. The value still has
-to be rotated: deleting the line clears the working tree, not history.
+fr.json was 12 keys short and, more to the point, never reached the
+screen: switchLanguage() updated the active button and nothing else.
+Added the keys, tagged the markup with data-i18n, and added
+applyTranslations() called from init() and switchLanguage().
 
-The French locale was broken in two independent ways, and fixing either
-alone would have changed nothing a user sees. fr.json carried 2 of the
-14 catalogue keys, and switchLanguage() moved the active highlight
-without ever calling t(). Add the 12 missing keys, and add
-applyTranslations(), called from init() and switchLanguage() and driven
-by data-i18n / data-i18n-placeholder markup in index.html.
+loadFromStorage() parsed localStorage unguarded from the constructor,
+so corrupt data blanked the page. Guarded, with malformed entries
+discarded and a .catch on init().
 
-The suite could not start at all: vitest.config.ts declared environment
-'jsdom' while package.json did not depend on it. Add jsdom, then take
-coverage from 26.02% to 100% statements over 42 tests. The suite was
-checked by seeding five defects into a throwaway copy outside the
-repository; all five were caught by a named test.
-
-Add prettier and eslint, which the project lacked, with format,
-format:check and lint scripts. endOfLine is crlf to match the checkout.
-Document the public surface with TSDoc and add README sections.
-
-refs: scaffold/expected_fixes.json
+render() split into filterTasks() and buildTaskRow(); behaviour
+unchanged, no test edited. Added Prettier and ESLint, which the project
+did not have. Coverage 26.02% -> 99.49% over 49 tests.
 ```
 
-## Not committed
-
-Nothing has been committed, pushed, or opened as a pull request. This branch is prepared
-for review only.
+Not committed — the Butler prepares, the human decides what ships.

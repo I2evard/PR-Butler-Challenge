@@ -5,73 +5,70 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Security
-
-- **Fixed a stored XSS hole in the task list.** `render()` in
-  `scaffold/website/src/taskManager.ts` assigned user-supplied task text with
-  `innerHTML`, so markup typed into the task field was parsed and executed on every
-  render — and, because tasks are persisted, on every subsequent page load. Switched to
-  `textContent`. Task text is never HTML in this application.
-- **Removed a credential from a source comment.** `loadFromStorage()` in
-  `scaffold/website/src/taskManager.ts` carried a `temp auth:` token beside an internal
-  API endpoint. Deleting the line removes it from the working tree only; the value must
-  still be treated as disclosed and rotated, because version-control history retains it.
+## [Unreleased] — 2026-09-23
 
 ### Added
 
-- **French translations for the 12 missing catalogue keys** in
-  `scaffold/website/src/translations/fr.json`: `task.placeholder`, `priority.low`,
-  `priority.medium`, `priority.high`, `button.add`, `filter.all`, `filter.active`,
-  `filter.completed`, `stats.total`, `stats.completed`, `button.delete` and
-  `footer.text`. The file now carries all 14 keys, in the same order as `en.json`.
-- **Runtime translation of the DOM.** New `applyTranslations(root = document)` in
-  `scaffold/website/src/i18n.ts` walks `[data-i18n]` and `[data-i18n-placeholder]` and
-  rewrites `textContent` and the `placeholder` attribute.
-- **Translation markup in `scaffold/website/index.html`** — 12 `data-i18n` attributes and
-  1 `data-i18n-placeholder`. The two stats labels and the footer caption were wrapped in
-  their own `<span>` so that translating the label does not destroy the adjacent counter
-  element.
-- **A formatting and linting toolchain**, which the project previously lacked:
-  `prettier`, `eslint`, `@eslint/js` and `typescript-eslint` in
-  `scaffold/website/package.json`, with `scaffold/website/.prettierrc` and
-  `scaffold/website/eslint.config.js`.
-- **`format`, `format:check` and `lint` scripts** in `scaffold/website/package.json`.
-- **`jsdom` as a dev dependency** in `scaffold/website/package.json`.
-- **TSDoc on the public surface** of `scaffold/website/src/taskManager.ts`,
+- `scaffold/website/src/translations/fr.json` — the 12 French labels that were
+  missing, in `en.json` key order; the catalogue now carries all 14 keys.
+- `scaffold/website/src/i18n.ts` — `applyTranslations()`, which rewrites the
+  text and input placeholders of any subtree into the active language.
+- `scaffold/website/index.html` — 12 `data-i18n` attributes and 1
+  `data-i18n-placeholder`, the link between the page and the catalogue. The
+  stats labels and the footer caption were each wrapped in their own `<span>`
+  so translating them cannot wipe the counters or the year.
+- `scaffold/website/src/tests/translations.test.ts` — 4 cases covering catalogue
+  alignment, key order and value content.
+- `scaffold/website/src/tests/i18n.test.ts` — 10 cases covering lookup,
+  fallback and subtree translation.
+- `scaffold/website/src/tests/taskManagerBehaviour.test.ts` — 17 cases covering
+  toggle, delete, filters, rendering, storage round-trip and corrupt storage.
+- `scaffold/website/src/tests/main.test.ts` — 16 cases covering boot, language
+  switching, form submission and filter buttons.
+- `scaffold/website/package.json` — `format`, `format:check`, `lint` and
+  `typecheck` scripts; `jsdom`, `prettier`, `eslint`, `@eslint/js`,
+  `typescript-eslint` and `globals` as dev dependencies.
+- `scaffold/website/.prettierrc` and `scaffold/website/eslint.config.js` — the
+  project had neither a formatter nor a linter.
+- `scaffold/website/README.md` — Features, Testing and Contributing sections.
+- TSDoc on the full public surface of `scaffold/website/src/taskManager.ts`,
   `scaffold/website/src/main.ts` and `scaffold/website/src/i18n.ts`.
-- **Features, Testing and Contributing sections** in `scaffold/website/README.md`.
-- **This changelog** and `PR_REQUEST.md`, both at the repository root.
 
 ### Changed
 
-- **The Delete button label is now translated.** `render()` in
-  `scaffold/website/src/taskManager.ts` used the hard-coded string `'Delete'`; it now
-  calls `t('button.delete')`.
-- **`switchLanguage()` now repaints the interface.** In `scaffold/website/src/main.ts` it
-  previously moved the `active` class between the two language buttons and returned — a
-  comment on its last line admitted the translation step was missing — so a fully
-  populated `fr.json` still rendered English. It now calls `applyTranslations()` and
-  re-renders the task list. `init()` calls `applyTranslations()` on startup for the same
-  reason.
-- **Reformatted `scaffold/website/src/main.ts`, `scaffold/website/src/taskManager.ts` and
-  `scaffold/website/src/styles.css`** with Prettier. `handleSubmit()` in `main.ts` had
-  zero indentation and no spaces around `=`, `(` or `|`. `endOfLine` is set to `crlf` to
-  match the checkout, so no file was rewritten purely for line endings.
+- `scaffold/website/src/taskManager.ts` — `render()` split into `filterTasks()`
+  and `buildTaskRow()`; it is now a short orchestrator instead of a 50-line
+  method doing five jobs. Behaviour is unchanged and no test was edited.
+- `scaffold/website/src/taskManager.ts` — the Delete button label now comes from
+  the catalogue via `t('button.delete')` instead of being hardcoded.
+- `scaffold/website/src/main.ts` — `switchLanguage()` now applies translations
+  and repaints the list; previously it moved the active button and nothing else,
+  so a complete `fr.json` still rendered English.
+- `scaffold/website/src/main.ts` — `handleSubmit()` reindented; it had zero
+  indentation and no spaces around `=`, `(` or `|`.
+- `scaffold/website/src/styles.css` — Prettier normalisation (spacing inside
+  `rgba()`, one selector per line, quote style). Indentation left at 4 spaces to
+  match the file.
 
 ### Fixed
 
-- **`jsdom` was missing from `scaffold/website/package.json`** while
-  `scaffold/website/vitest.config.ts` declared `environment: 'jsdom'`. The test suite
-  could not start at all; `npm run test` aborted with `MISSING DEPENDENCY 'jsdom'`.
+- `scaffold/website/src/taskManager.ts` — `loadFromStorage()` no longer lets a
+  corrupt `localStorage` entry escape the constructor. Invalid JSON, a non-array
+  value and malformed entries are discarded instead of blanking the page.
+- `scaffold/website/src/main.ts` — the top-level `init()` call now has a
+  `.catch`; its rejection was previously unhandled.
+- `scaffold/website/src/taskManager.ts` — removed the
+  `// Long function that should be refactored` marker, with the refactor done.
+- `scaffold/website/src/main.ts` — removed the `// Missing error handling`
+  marker, with the handling added.
 
-### Not changed (deliberately)
+### Security
 
-- The `<title>` element, the "Your Tasks" heading and the priority badge in
-  `scaffold/website/index.html` / `taskManager.ts` have no key in `en.json` and were left
-  in English rather than inventing catalogue entries nobody asked for.
-- The language buttons read "English" and "Français"; language names are conventionally
-  written in their own language and are not translated.
-- `scaffold/expected_fixes.json` lists an unused variable named `unusedVariable`. No such
-  symbol exists in the source, and none was invented to match.
+- `scaffold/website/src/taskManager.ts` — **stored XSS fixed.** Task text was
+  written to the DOM with `innerHTML`, so any user-supplied markup executed on
+  every render. It now goes through `textContent`.
+- `scaffold/website/src/taskManager.ts` — **credential removed from a comment**
+  in `loadFromStorage()`: a `temp auth:` token sitting beside an internal API
+  endpoint. Both the token and the endpoint are gone from the source. Note that
+  deleting the line does not remove it from the git history — treat the token as
+  exposed and rotate it.

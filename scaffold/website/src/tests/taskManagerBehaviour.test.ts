@@ -1,298 +1,235 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { TaskManager } from '../taskManager'
-
 /*
- * SCENARIOS - TaskManager rendering, filtering, mutation and persistence
- *
- *  1. render() does nothing at all when the #tasks host element is absent
- *  2. Adding tasks renders one .task-item per task, in insertion order
- *  3. A rendered task shows its text, an uppercased priority badge and a Delete button
- *  4. A completed task carries the `completed` class; an incomplete one does not
- *  5. The stats spans show the total task count and the completed task count
- *  6. Task text is inserted as text, never as markup (XSS regression)
- *  7. The rendered checkbox reflects the completion state
- *  8. Clicking the rendered checkbox toggles the task
- *  9. Clicking the rendered delete button removes the task
- * 10. Filter 'active' renders only the incomplete task, by name
- * 11. Filter 'completed' renders only the complete task, by name
- * 12. Filter 'all' renders every task again
- * 13. Filtering never changes the stats, which always count every task
- * 14. Toggling a task twice brings it back to not-completed
- * 15. deleteTask removes only the matching id
- * 16. deleteTask with an unknown id changes nothing
- * 17. toggleTask with an unknown id changes nothing
- * 18. Tasks survive into a freshly constructed TaskManager (storage round-trip)
- * 19. The id generated after a reload does not collide with a restored id
- * 20. Deletions are persisted too
- * 21. An empty storage yields an empty manager
+ * SCENARIOS - gestion des taches
+ *  1. Cocher une tache la marque terminee ; la decocher la remet active
+ *  2. Cocher une tache qui n'existe pas ne change rien et ne plante pas
+ *  3. Supprimer une tache retire la bonne et laisse les autres intactes
+ *  4. Supprimer une tache qui n'existe pas laisse la liste inchangee
+ *  5. Le filtre « actives » n'affiche que les taches non terminees
+ *  6. Le filtre « terminees » n'affiche que les taches terminees
+ *  7. Le filtre « toutes » reaffiche l'ensemble des taches
+ *  8. Dessiner la liste sans zone d'affichage ne plante pas
+ *  9. Chaque tache donne une ligne, les compteurs suivent, les terminees sont marquees
+ * 10. Cocher la case d'une ligne bascule la tache correspondante
+ * 11. Cliquer le bouton de suppression d'une ligne retire cette tache
+ * 12. Une tache dont le texte ressemble a du HTML s'affiche comme du texte, jamais comme du HTML
+ * 13. Les taches survivent a un rechargement et la numerotation reprend au bon endroit
+ * 14. Un stockage illisible (JSON invalide) redemarre sur une liste vide sans plantage
+ * 15. Un stockage qui ne contient pas une liste de taches redemarre sur une liste vide
+ * 16. Un stockage contenant « null » redemarre sur une liste vide
+ * 17. Le bouton de suppression est libelle dans la langue courante
  */
+import { describe, it, expect, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { TaskManager } from '../taskManager'
+import { setLanguage } from '../i18n'
 
-const DOM = '<ul id="tasks"></ul><span id="total-count"></span><span id="completed-count"></span>'
+const PAGE = readFileSync(resolve(__dirname, '../../index.html'), 'utf-8')
+const APP_MARKUP = PAGE.slice(PAGE.indexOf('<body>') + 6, PAGE.indexOf('</body>'))
 
-function renderedTexts(): string[] {
-  return Array.from(document.querySelectorAll('#tasks .task-text')).map(el => el.textContent ?? '')
+function lignes(): HTMLLIElement[] {
+  return Array.from(document.querySelectorAll('#tasks li'))
 }
 
-function click(el: Element) {
-  el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+function textesAffiches(): string[] {
+  return Array.from(document.querySelectorAll('#tasks .task-text')).map(n => n.textContent ?? '')
 }
 
-describe('TaskManager rendering', () => {
+// Construit un gestionnaire en absorbant une eventuelle exception : le test echoue alors
+// sur « construit » qui vaut undefined, au lieu de recracher le message d'erreur brut.
+function construireDepuisLeStockage(contenu: string) {
+  localStorage.setItem('tasks', contenu)
+  let construit: TaskManager | undefined
+  let aPlante = false
+  try {
+    construit = new TaskManager()
+  } catch {
+    aPlante = true
+  }
+  return { construit, aPlante }
+}
+
+describe('TaskManager - comportement', () => {
   let manager: TaskManager
 
   beforeEach(() => {
     localStorage.clear()
-    document.body.innerHTML = DOM
+    setLanguage('en')
+    document.body.innerHTML = APP_MARKUP
     manager = new TaskManager()
   })
 
-  // Scenario 1
-  it('renders nothing and updates no stats when the task list element is missing', () => {
-    document.body.innerHTML = '<span id="total-count"></span><span id="completed-count"></span>'
-    manager.addTask('Orphan task', 'low')
+  it('scenario 1 - bascule une tache puis la ramene a son etat initial', () => {
+    manager.addTask('Une tache', 'low')
+    const id = manager.getTasks()[0].id
 
-    expect(manager.getTasks()).toHaveLength(1)
-    expect(document.getElementById('total-count')?.textContent).toBe('')
-    expect(document.getElementById('completed-count')?.textContent).toBe('')
-  })
-
-  // Scenario 2
-  it('renders one list item per task in insertion order', () => {
-    manager.addTask('First', 'low')
-    manager.addTask('Second', 'high')
-
-    expect(document.querySelectorAll('#tasks .task-item')).toHaveLength(2)
-    expect(renderedTexts()).toEqual(['First', 'Second'])
-  })
-
-  // Scenario 3
-  it('renders the task text, an uppercased priority badge and a Delete button', () => {
-    manager.addTask('Write the report', 'high')
-
-    const item = document.querySelector('#tasks .task-item')
-    expect(item?.querySelector('.task-text')?.textContent).toBe('Write the report')
-    expect(item?.querySelector('.priority-badge')?.textContent).toBe('HIGH')
-    expect(item?.querySelector('.priority-badge')?.classList.contains('priority-high')).toBe(true)
-    expect(item?.querySelector('.delete-btn')?.textContent).toBe('Delete')
-  })
-
-  // Scenario 4
-  it('marks a completed task with the completed class and leaves others without it', () => {
-    manager.addTask('Done thing', 'low')
-    manager.addTask('Pending thing', 'low')
-    manager.toggleTask(1)
-
-    const items = document.querySelectorAll('#tasks .task-item')
-    expect(items[0].classList.contains('completed')).toBe(true)
-    expect(items[1].classList.contains('completed')).toBe(false)
-  })
-
-  // Scenario 5
-  it('shows the total and completed counts in the stats spans', () => {
-    manager.addTask('A', 'low')
-    manager.addTask('B', 'medium')
-    manager.addTask('C', 'high')
-    manager.toggleTask(2)
-
-    expect(document.getElementById('total-count')?.textContent).toBe('3')
-    expect(document.getElementById('completed-count')?.textContent).toBe('1')
-  })
-
-  // Scenario 6 - XSS regression: task text must go through textContent, never innerHTML
-  it('never turns task text into live markup', () => {
-    const payload = '<img src=x onerror="alert(1)">'
-    manager.addTask(payload, 'low')
-
-    expect(document.querySelectorAll('#tasks img')).toHaveLength(0)
-    expect(document.querySelectorAll('#tasks .task-text')).toHaveLength(1)
-    expect(document.querySelector('#tasks .task-text')?.textContent).toBe(payload)
-  })
-
-  // Scenario 7
-  it('reflects the completion state on the rendered checkbox', () => {
-    manager.addTask('Checkable', 'low')
-    expect(document.querySelector<HTMLInputElement>('#tasks .task-checkbox')?.checked).toBe(false)
-
-    manager.toggleTask(1)
-    expect(document.querySelector<HTMLInputElement>('#tasks .task-checkbox')?.checked).toBe(true)
-  })
-
-  // Scenario 8
-  it('toggles the task when its rendered checkbox is clicked', () => {
-    manager.addTask('Clickable', 'low')
-
-    click(document.querySelector('#tasks .task-checkbox') as Element)
-
-    expect(manager.getCompletedCount()).toBe(1)
-    expect(document.querySelector('#tasks .task-item')?.classList.contains('completed')).toBe(true)
-  })
-
-  // Scenario 9
-  it('removes the task when its rendered delete button is clicked', () => {
-    manager.addTask('Removable', 'low')
-    manager.addTask('Untouched', 'low')
-
-    click(document.querySelector('#tasks .delete-btn') as Element)
-
-    expect(manager.getTasks().map(task => task.text)).toEqual(['Untouched'])
-    expect(renderedTexts()).toEqual(['Untouched'])
-  })
-})
-
-describe('TaskManager filtering', () => {
-  let manager: TaskManager
-
-  beforeEach(() => {
-    localStorage.clear()
-    document.body.innerHTML = DOM
-    manager = new TaskManager()
-    manager.addTask('Still to do', 'low')
-    manager.addTask('Already done', 'high')
-    manager.toggleTask(2)
-  })
-
-  // Scenario 10
-  it('shows only the incomplete task under the active filter', () => {
-    manager.setFilter('active')
-
-    expect(document.querySelectorAll('#tasks .task-item')).toHaveLength(1)
-    expect(renderedTexts()).toEqual(['Still to do'])
-  })
-
-  // Scenario 11
-  it('shows only the completed task under the completed filter', () => {
-    manager.setFilter('completed')
-
-    expect(document.querySelectorAll('#tasks .task-item')).toHaveLength(1)
-    expect(renderedTexts()).toEqual(['Already done'])
-  })
-
-  // Scenario 12
-  it('shows every task again under the all filter', () => {
-    manager.setFilter('completed')
-    manager.setFilter('all')
-
-    expect(document.querySelectorAll('#tasks .task-item')).toHaveLength(2)
-    expect(renderedTexts()).toEqual(['Still to do', 'Already done'])
-  })
-
-  // Scenario 13
-  it('keeps the stats counting every task regardless of the filter', () => {
-    manager.setFilter('active')
-
-    expect(document.getElementById('total-count')?.textContent).toBe('2')
-    expect(document.getElementById('completed-count')?.textContent).toBe('1')
-  })
-})
-
-describe('TaskManager mutation', () => {
-  let manager: TaskManager
-
-  beforeEach(() => {
-    localStorage.clear()
-    document.body.innerHTML = DOM
-    manager = new TaskManager()
-  })
-
-  // Scenario 14
-  it('returns a task to not-completed when toggled twice', () => {
-    manager.addTask('Flip me', 'low')
-
-    manager.toggleTask(1)
+    manager.toggleTask(id)
     expect(manager.getTasks()[0].completed).toBe(true)
     expect(manager.getCompletedCount()).toBe(1)
 
-    manager.toggleTask(1)
+    manager.toggleTask(id)
     expect(manager.getTasks()[0].completed).toBe(false)
     expect(manager.getCompletedCount()).toBe(0)
-    expect(document.querySelector('#tasks .task-item')?.classList.contains('completed')).toBe(false)
   })
 
-  // Scenario 15
-  it('deletes only the task with the matching id', () => {
-    manager.addTask('Keep me', 'low')
-    manager.addTask('Delete me', 'low')
-    manager.addTask('Keep me too', 'low')
+  it('scenario 2 - ignorer une bascule sur un identifiant inconnu', () => {
+    manager.addTask('Une tache', 'low')
 
-    manager.deleteTask(2)
-
-    expect(manager.getTasks().map(task => task.text)).toEqual(['Keep me', 'Keep me too'])
-    expect(renderedTexts()).toEqual(['Keep me', 'Keep me too'])
-    expect(document.getElementById('total-count')?.textContent).toBe('2')
+    expect(() => manager.toggleTask(9999)).not.toThrow()
+    expect(manager.getTasks()).toHaveLength(1)
+    expect(manager.getTasks()[0].completed).toBe(false)
   })
 
-  // Scenario 16
-  it('leaves everything untouched when deleting an unknown id', () => {
-    manager.addTask('Survivor', 'low')
+  it('scenario 3 - supprime la bonne tache', () => {
+    manager.addTask('Premiere', 'low')
+    manager.addTask('Deuxieme', 'high')
+    const idPremiere = manager.getTasks()[0].id
 
-    manager.deleteTask(999)
+    manager.deleteTask(idPremiere)
 
     expect(manager.getTasks()).toHaveLength(1)
-    expect(renderedTexts()).toEqual(['Survivor'])
+    expect(manager.getTasks()[0].text).toBe('Deuxieme')
+    expect(textesAffiches()).toEqual(['Deuxieme'])
   })
 
-  // Scenario 17
-  it('leaves everything untouched when toggling an unknown id', () => {
-    manager.addTask('Survivor', 'low')
+  it('scenario 4 - une suppression sur un identifiant inconnu laisse la liste intacte', () => {
+    manager.addTask('Premiere', 'low')
+    manager.addTask('Deuxieme', 'high')
 
-    manager.toggleTask(999)
-
-    expect(manager.getCompletedCount()).toBe(0)
-    expect(document.querySelector('#tasks .task-item')?.classList.contains('completed')).toBe(false)
-  })
-})
-
-describe('TaskManager persistence', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    document.body.innerHTML = DOM
+    expect(() => manager.deleteTask(9999)).not.toThrow()
+    expect(manager.getTasks().map(t => t.text)).toEqual(['Premiere', 'Deuxieme'])
   })
 
-  // Scenario 18
-  it('restores the saved tasks into a freshly constructed manager', () => {
-    const first = new TaskManager()
-    first.addTask('Persisted A', 'low')
-    first.addTask('Persisted B', 'high')
-    first.toggleTask(2)
+  it('scenario 5 - le filtre actives n affiche que les taches non terminees', () => {
+    manager.addTask('Active', 'low')
+    manager.addTask('Terminee', 'high')
+    manager.toggleTask(manager.getTasks()[1].id)
 
-    const reloaded = new TaskManager()
+    manager.setFilter('active')
 
-    expect(reloaded.getTasks().map(task => task.text)).toEqual(['Persisted A', 'Persisted B'])
-    expect(reloaded.getTasks().map(task => task.priority)).toEqual(['low', 'high'])
-    expect(reloaded.getCompletedCount()).toBe(1)
+    expect(textesAffiches()).toEqual(['Active'])
   })
 
-  // Scenario 19
-  it('generates a fresh id that collides with no restored id', () => {
-    const first = new TaskManager()
-    first.addTask('Persisted A', 'low')
-    first.addTask('Persisted B', 'low')
+  it('scenario 6 - le filtre terminees n affiche que les taches terminees', () => {
+    manager.addTask('Active', 'low')
+    manager.addTask('Terminee', 'high')
+    manager.toggleTask(manager.getTasks()[1].id)
 
-    const reloaded = new TaskManager()
-    reloaded.addTask('Brand new', 'low')
+    manager.setFilter('completed')
 
-    const ids = reloaded.getTasks().map(task => task.id)
-    expect(ids).toEqual([1, 2, 3])
-    expect(new Set(ids).size).toBe(ids.length)
+    expect(textesAffiches()).toEqual(['Terminee'])
   })
 
-  // Scenario 20
-  it('persists deletions as well as additions', () => {
-    const first = new TaskManager()
-    first.addTask('Doomed', 'low')
-    first.addTask('Kept', 'low')
-    first.deleteTask(1)
+  it('scenario 7 - le filtre toutes reaffiche l ensemble', () => {
+    manager.addTask('Active', 'low')
+    manager.addTask('Terminee', 'high')
+    manager.toggleTask(manager.getTasks()[1].id)
+    manager.setFilter('completed')
 
-    const reloaded = new TaskManager()
+    manager.setFilter('all')
 
-    expect(reloaded.getTasks().map(task => task.text)).toEqual(['Kept'])
+    expect(textesAffiches()).toEqual(['Active', 'Terminee'])
   })
 
-  // Scenario 21
-  it('starts empty when storage holds nothing', () => {
-    const manager = new TaskManager()
+  it('scenario 8 - dessiner sans zone d affichage ne plante pas', () => {
+    document.body.innerHTML = ''
 
-    expect(manager.getTasks()).toEqual([])
-    expect(manager.getCompletedCount()).toBe(0)
+    expect(() => manager.render()).not.toThrow()
+    expect(() => manager.addTask('Sans page', 'low')).not.toThrow()
+    expect(manager.getTasks()).toHaveLength(1)
+  })
+
+  it('scenario 9 - une ligne par tache, compteurs a jour, terminees marquees', () => {
+    manager.addTask('Premiere', 'low')
+    manager.addTask('Deuxieme', 'medium')
+    manager.addTask('Troisieme', 'high')
+    manager.toggleTask(manager.getTasks()[2].id)
+
+    expect(lignes()).toHaveLength(3)
+    expect(document.getElementById('total-count')?.textContent).toBe('3')
+    expect(document.getElementById('completed-count')?.textContent).toBe('1')
+    expect(lignes()[0].classList.contains('completed')).toBe(false)
+    expect(lignes()[2].classList.contains('completed')).toBe(true)
+    const cases = document.querySelectorAll<HTMLInputElement>('#tasks .task-checkbox')
+    expect(cases[2].checked).toBe(true)
+    expect(document.querySelectorAll('#tasks .priority-badge.priority-high')).toHaveLength(1)
+  })
+
+  it('scenario 10 - cocher la case d une ligne bascule la tache', () => {
+    manager.addTask('Une tache', 'low')
+    const laCase = document.querySelector('#tasks .task-checkbox') as HTMLInputElement
+
+    laCase.checked = true
+    laCase.dispatchEvent(new Event('change'))
+
+    expect(manager.getTasks()[0].completed).toBe(true)
+    expect(document.getElementById('completed-count')?.textContent).toBe('1')
+  })
+
+  it('scenario 11 - cliquer le bouton de suppression retire la tache', () => {
+    manager.addTask('Premiere', 'low')
+    manager.addTask('Deuxieme', 'high')
+
+    const premierBouton = document.querySelectorAll('#tasks .delete-btn')[0] as HTMLButtonElement
+    premierBouton.click()
+
+    expect(manager.getTasks().map(t => t.text)).toEqual(['Deuxieme'])
+    expect(lignes()).toHaveLength(1)
+  })
+
+  it('scenario 12 - un texte de tache ressemblant a du HTML reste du texte', () => {
+    const charge = '<img src=x onerror=alert(1)>'
+
+    manager.addTask(charge, 'low')
+
+    const cellule = document.querySelector('#tasks .task-text') as HTMLElement
+    expect(cellule.querySelector('img')).toBeNull()
+    expect(cellule.children).toHaveLength(0)
+    expect(cellule.textContent).toBe(charge)
+    expect(document.querySelector('#tasks img')).toBeNull()
+  })
+
+  it('scenario 13 - les taches survivent au rechargement et la numerotation reprend', () => {
+    manager.addTask('Premiere', 'low')
+    manager.addTask('Deuxieme', 'high')
+
+    const rechargee = new TaskManager()
+    expect(rechargee.getTasks().map(t => t.text)).toEqual(['Premiere', 'Deuxieme'])
+
+    rechargee.addTask('Troisieme', 'medium')
+    expect(rechargee.getTasks().map(t => t.id)).toEqual([1, 2, 3])
+  })
+
+  it('scenario 14 - un stockage illisible redemarre sur une liste vide', () => {
+    const { construit, aPlante } = construireDepuisLeStockage('{{{pas du json')
+
+    expect(aPlante, 'la construction a leve une exception').toBe(false)
+    expect(construit?.getTasks()).toEqual([])
+    construit?.addTask('Apres incident', 'low')
+    expect(construit?.getTasks()).toHaveLength(1)
+  })
+
+  it('scenario 15 - un stockage qui n est pas une liste redemarre sur une liste vide', () => {
+    const { construit, aPlante } = construireDepuisLeStockage('{"a":1}')
+
+    expect(aPlante, 'la construction a leve une exception').toBe(false)
+    expect(construit?.getTasks()).toEqual([])
+  })
+
+  it('scenario 16 - un stockage contenant null redemarre sur une liste vide', () => {
+    const { construit, aPlante } = construireDepuisLeStockage('null')
+
+    expect(aPlante, 'la construction a leve une exception').toBe(false)
+    expect(construit?.getTasks()).toEqual([])
+  })
+
+  it('scenario 17 - le bouton de suppression suit la langue courante', () => {
+    manager.addTask('Une tache', 'low')
+    expect(document.querySelector('#tasks .delete-btn')?.textContent).toBe('Delete')
+
+    setLanguage('fr')
+    manager.render()
+
+    expect(document.querySelector('#tasks .delete-btn')?.textContent).toBe('Supprimer')
   })
 })

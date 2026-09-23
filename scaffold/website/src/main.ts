@@ -6,14 +6,10 @@ import './styles.css'
 let taskManager: TaskManager
 
 /**
- * Boots the application against the document already in the page.
+ * Boots the application: loads the catalogues, restores saved tasks, wires the
+ * page up and paints the first frame in the active language.
  *
- * Loads the catalogues, restores saved tasks, binds the handlers, translates the
- * static markup, and draws the first list — in that order, because the handlers
- * close over `taskManager` and the translation pass must precede the first paint.
- * Runs once at module import; there is no teardown.
- *
- * @returns A promise that resolves when the first paint is done.
+ * @returns A promise that settles once the page is interactive.
  */
 async function init() {
   await loadTranslations()
@@ -24,11 +20,10 @@ async function init() {
 }
 
 /**
- * Binds every interaction handler the page needs, once.
+ * Binds the page controls to the task manager.
  *
- * Covers form submission, the two language buttons and the three filter buttons.
- * Elements are looked up defensively, so a page missing one of them still boots.
- * Calling this twice would attach duplicate handlers.
+ * Every lookup is optional: the app is expected to survive a page that is
+ * missing a control rather than abort the whole boot for one absent node.
  */
 function setupEventListeners() {
   const form = document.getElementById('task-form') as HTMLFormElement
@@ -54,12 +49,12 @@ function setupEventListeners() {
 }
 
 /**
- * Turns a submitted form into a new task and clears the field.
+ * Turns a form submission into a new task and clears the field.
  *
- * Suppresses the browser's navigation, ignores input that is blank or only
- * whitespace, and stores the raw (untrimmed) value with the chosen priority.
+ * Blank and whitespace-only input is ignored, so the native `required`
+ * attribute is not the only thing standing between the user and an empty task.
  *
- * @param e The form's submit event.
+ * @param e - The form's submit event; its default navigation is suppressed.
  */
 function handleSubmit(e: Event) {
   e.preventDefault()
@@ -72,13 +67,13 @@ function handleSubmit(e: Event) {
 }
 
 /**
- * Switches the interface language and repaints everything already on screen.
+ * Switches the interface to another language.
  *
- * Moves the `active` highlight to the chosen button, retranslates the static
- * markup, then re-renders the task list so dynamically built labels such as the
- * Delete button follow too. The choice is not persisted across reloads.
+ * Moves the active marker onto the chosen button, retranslates the static
+ * markup, then repaints the task list — the rows are built in code, so they
+ * carry labels that `applyTranslations` alone would not reach.
  *
- * @param lang Locale code to switch to, `'en'` or `'fr'`.
+ * @param lang - Language code to switch to, such as `'en'` or `'fr'`.
  */
 function switchLanguage(lang: string) {
   setLanguage(lang)
@@ -91,8 +86,9 @@ function switchLanguage(lang: string) {
   activeBtn?.classList.add('active')
 
   applyTranslations()
-  taskManager?.render()
+  taskManager.render()
 }
 
-// Missing error handling
-init()
+init().catch(error => {
+  console.error('Task manager failed to start', error)
+})
