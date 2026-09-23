@@ -87,7 +87,16 @@ npm run test:coverage
 >
 > Do it this way, so two runs produce the same structure:
 >
-> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the input. **There are 13 of the first and 1 of the second** — title, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer, and the task input's placeholder.
+> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the task input. **12 of the first, 1 of the second, 13 attributes in all**: the page title heading, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer text — and the input's placeholder.
+>
+>    **Two of those cannot take the attribute as the markup stands**, because `textContent` would destroy what sits beside the label:
+>
+>    ```html
+>    <p><span data-i18n="stats.total">Total tasks</span>: <span id="total-count">0</span></p>
+>    <p><span data-i18n="footer.text">Built with TypeScript</span> • 2026</p>
+>    ```
+>
+>    Wrap the label in its own `<span>` and tag that. Writing the key onto the parent `<p>` wipes the counter and the year.
 > 2. Add `applyTranslations(root = document)` to `src/i18n.ts`: walk both attribute sets and rewrite `textContent` and `placeholder`.
 > 3. Call it from `init()` and from `switchLanguage()`, and repaint the task list after — the Delete button is built in `taskManager.ts` and must use `t('button.delete')`.
 >
@@ -107,8 +116,12 @@ npm run test:coverage
 
    ```json
    "format": "prettier --write \"src/**/*.{ts,css,json}\"",
-   "lint": "eslint src --max-warnings 0"
+   "format:check": "prettier --check \"src/**/*.{ts,css,json}\"",
+   "lint": "eslint src --max-warnings 0",
+   "typecheck": "tsc --noEmit"
    ```
+
+   All four, not just the first two: Gate 4 calls `typecheck` and Gate 6 calls `format:check`. Add them here or those gates die on "missing script".
 
 3. Add a minimal `eslint.config.js` and a `.prettierrc` that match the code already in the repo. **Match the existing style; do not impose a new one.** A formatter that rewrites every untouched line buries the real changes in the diff.
 
@@ -253,13 +266,21 @@ Run in this order and stop at the first failure:
 
 The four deliverables of Gate 7: `scaffold/website/README.md`, `CHANGELOG.md`, `PR_REQUEST.md`, and `src/translations/fr.json`.
 
-> **Gate 8 is the one nobody writes, and it is the cheapest real check here.** A pre-commit tool that is not idempotent is dangerous: run it twice and it should produce an empty diff. Run the whole workflow a second time and confirm:
+> **Gate 8 is the one nobody writes, and it is the cheapest real check here.** A pre-commit tool that is not idempotent is dangerous: run it twice and it should produce an empty diff.
+>
+> Re-running means **confirming each step's goal state still holds**, not regenerating its output. Do not rewrite `CHANGELOG.md` and `PR_REQUEST.md` on the second pass — Step 6 writes, so make a third pass after it to prove that write was idempotent too.
 >
 > ```bash
 > git status --porcelain     # expect no output
 > ```
 >
-> A second run that still changes files means something is churning — a formatter fighting the line endings, a test generator appending duplicates, a CHANGELOG rewriting its own entries. Each of those ships noise into a reviewer's diff.
+> **If this is not a git checkout**, that command fails and the gate is unrunnable as written — nothing else in this workflow assumes git, so do not assume it here either. Fall back to a content manifest taken before and after, honouring `.gitignore`:
+>
+> ```bash
+> node -e "const{createHash}=require('crypto'),fs=require('fs'),p=require('path');const skip=new Set(['node_modules','dist','coverage','.git']);const h=createHash('sha256');(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true}).sort((a,b)=>a.name<b.name?-1:1)){if(skip.has(e.name))continue;const f=p.join(d,e.name);e.isDirectory()?w(f):h.update(f+fs.readFileSync(f))}})('.');console.log(h.digest('hex'))"
+> ```
+>
+> Same hash before and after means nothing moved. A second run that still changes files means something is churning — a formatter fighting the line endings, a test generator appending duplicates, a CHANGELOG rewriting its own entries. Each of those ships noise into a reviewer's diff.
 
 > ⚠️ **A gate can pass because it checked nothing.** `npm run lint` over a glob that matches no file exits 0 and reports clean. A suite that collects zero test files exits 0. An empty pass is indistinguishable from a real one in the exit code, and it is the failure mode a quality gate exists to prevent — so confirm the work was seen, not only that nothing complained:
 >
@@ -319,7 +340,8 @@ STEP 1 — Translations
          stats.total, stats.completed, button.delete, footer.text
   Validation: OK — 14 keys, both files aligned
   ⚠ switchLanguage() does not apply translations to the DOM — wired t() into
-    the 6 translatable elements in index.html
+    index.html: 12 data-i18n + 1 data-i18n-placeholder (stats label and
+    footer text wrapped in their own span so the counter and year survive)
   PASS
 
 STEP 2 — Code Cleanup
@@ -419,16 +441,7 @@ The agent verifies each box by running the command beside it, not by recalling w
 | 14 | A second full run changes nothing | `git status --porcelain` is empty |
 | 15 | No gate passed vacuously | the linter saw files, the suite ran more cases than the baseline |
 
-- [ ] All 14 French translation keys present in `fr.json`
-- [ ] Code formatted consistently
-- [ ] No lint violations
-- [ ] Test coverage ≥ 80%
-- [ ] All tests pass
-- [ ] JSDoc/TSDoc on all public functions
-- [ ] `README.md` has Features, Testing, and Contributing sections
-- [ ] `CHANGELOG.md` generated
-- [ ] `PR_REQUEST.md` generated with summary and checklist
-- [ ] Conventional commit message prepared
+**The table above is the authoritative list.** It supersedes the shorter checklist this template shipped with, which covered the same ground in fewer rows and vaguer words.
 
 ---
 
