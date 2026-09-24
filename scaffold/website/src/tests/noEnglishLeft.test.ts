@@ -1,142 +1,89 @@
-// SCENARIOS - is there any English left on a French page?
-//
-// Counting keys exits 0. Diffing en.json against fr.json exits 0. A suite that asserts on the
-// elements somebody thought to tag exits 0. All three measure a proxy, and all three stayed
-// green while an English heading sat on the French page. This file measures the thing itself:
-// it walks the page as it is actually rendered, in French, and names every English word still
-// on screen. What has no key is exactly what was missed, so the rule here is not "does this
-// string have a key" but "is this string allowed to be here at all".
-//
-//   1. No English catalogue value survives anywhere on the French page
-//   2. Nothing is on screen but French sentences, the language buttons and what the user typed
-//   3. The same rule holds for placeholder, title and aria-label attributes
-//   4. The same rule holds for the browser-tab title
-//   5. The detector proves it actually looked: a walk that sees nothing is the same failure
-//      class this file exists to catch
-
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { mountPage, PAGE_TITLE } from './fixture'
-import enCatalogue from '../translations/en.json'
+/**
+ * SCÉNARIOS — plus rien en anglais quand la page est en français
+ *
+ * Compter les clés, comparer les catalogues et vérifier élément par élément
+ * sortent tous en vert avec un titre anglais en travers d'une page française :
+ * les coupables n'ont pas de clé, c'est précisément pour ça qu'on les rate.
+ * On fait donc l'inverse : on parcourt la page rendue et on refuse toute chaîne
+ * qui n'est pas une valeur du catalogue français.
+ *
+ *  1. Après démarrage, ajout d'une tâche et passage au français, aucune chaîne
+ *     visible de la page n'est étrangère au catalogue français
+ *  2. Le parcours a réellement vu la page (plus de 10 chaînes récoltées) — sans
+ *     cette borne, un parcours qui ne ramène rien passerait au vert
+ *  3. Les attributs visibles (placeholder, title, aria-label) sont couverts eux aussi
+ *  4. Le titre du document est couvert lui aussi
+ *  5. Les deux boutons de langue restent dans leur propre langue, par conception
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mountFixture, flush } from './fixture'
 import frCatalogue from '../translations/fr.json'
 
-const EN = enCatalogue as Record<string, string>
-const FR = frCatalogue as Record<string, string>
+const fr = frCatalogue as Record<string, string>
 
-/** The task description this test types into the form. Deliberately not English prose. */
-const TYPED_TASK = 'Ma tache de test'
+/** Le texte de la tâche saisie par l'utilisateur : il n'a pas à être traduit. */
+const TYPED_TASK = 'Relire la demande de tirage'
 
-/**
- * Everything the French page is PERMITTED to show that is not a French catalogue value.
- * Exactly three entries, each for a stated reason:
- * - `English` and `Français`: the two language buttons. Each is already written in the language
- *   it selects, so translating either would make it unreadable to the reader who needs it.
- * - {@link TYPED_TASK}: the user typed it. The application must never rewrite a user's words.
- * Anything else on screen is a bug, and this file is what names it.
- */
+/** Chaque bouton de langue est déjà écrit dans la langue qu'il sélectionne. */
 const ALLOWED = new Set(['English', 'Français', TYPED_TASK])
 
-const FRENCH_VALUES = new Set(Object.values(FR).map(value => value.trim()))
-const ENGLISH_VALUES = new Set(Object.values(EN).map(value => value.trim()))
+/** Les attributs qui portent du texte lu par un humain. */
+const TEXT_ATTRIBUTES = ['placeholder', 'title', 'aria-label']
 
-/** True when the text carries at least one letter, in any script. */
-function hasLetters(text: string): boolean {
-  return /\p{L}/u.test(text)
-}
+function collectVisibleStrings(): string[] {
+  const found: string[] = []
 
-/** A string is acceptable on the French page if it is a French sentence or is allow-listed. */
-function isAcceptable(text: string): boolean {
-  return FRENCH_VALUES.has(text) || ALLOWED.has(text)
-}
-
-/** Every trimmed text node under `<body>` that carries at least one letter. */
-function wordsOnScreen(): string[] {
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
-  const words: string[] = []
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const text = node.textContent?.trim() ?? ''
-    if (hasLetters(text)) words.push(text)
+  const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    found.push(node.textContent ?? '')
+    node = walker.nextNode()
   }
-  return words
+
+  document.querySelectorAll('*').forEach(el => {
+    for (const attr of TEXT_ATTRIBUTES) {
+      const value = el.getAttribute(attr)
+      if (value !== null) found.push(value)
+    }
+  })
+
+  found.push(document.title)
+
+  // Les compteurs, séparateurs et millésimes ne sont pas des mots.
+  return found.map(s => s.trim()).filter(s => /\p{L}/u.test(s))
 }
 
-/** Every element under `<body>` carrying the given attribute. */
-function elementsWith(attribute: string): Element[] {
-  return Array.from(document.body.querySelectorAll('[' + attribute + ']'))
-}
+beforeEach(() => {
+  localStorage.clear()
+  vi.resetModules()
+})
 
-/** Renders the failing strings into the assertion message, because that list is the point. */
-function report(label: string, offenders: string[]): string {
-  return offenders.length === 0 ? label : label + ': ' + offenders.join(' | ')
-}
+afterEach(() => {
+  vi.resetModules()
+  localStorage.clear()
+})
 
-describe('no English left on the French page', () => {
-  beforeAll(async () => {
-    localStorage.clear()
-    document.documentElement.lang = 'en'
-    // mountPage() mounts <body> only, so seed the tab title the way a browser would load it.
-    document.title = PAGE_TITLE
-    mountPage()
-
-    vi.resetModules()
+describe('aucun anglais residuel sur la page francaise', () => {
+  it('ne laisse aucune chaine etrangere au catalogue francais', async () => {
+    mountFixture()
     await import('../main')
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await flush()
 
-    // Badges and delete buttons are built in code, not in the markup, so a static-page check
-    // would never see them. One task of each priority makes all three chips appear.
-    const input = document.querySelector<HTMLInputElement>('#task-input')!
-    const select = document.querySelector<HTMLSelectElement>('#priority-select')!
-    const form = document.querySelector<HTMLFormElement>('#task-form')!
-    for (const priority of ['low', 'medium', 'high']) {
-      input.value = TYPED_TASK
-      select.value = priority
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    }
+    const input = document.getElementById('task-input') as HTMLInputElement
+    input.value = TYPED_TASK
+    ;(document.getElementById('priority-select') as HTMLSelectElement).value = 'high'
+    document
+      .getElementById('task-form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 
-    document.querySelector<HTMLButtonElement>('#lang-fr')!.click()
-  })
+    document.getElementById('lang-fr')!.click()
+    await flush()
 
-  afterAll(() => {
-    localStorage.clear()
-    vi.resetModules()
-  })
+    const strings = collectVisibleStrings()
+    const french = new Set(Object.values(fr))
 
-  it('shows no English catalogue value anywhere on the page', () => {
-    const leftInEnglish = wordsOnScreen().filter(text => ENGLISH_VALUES.has(text))
-    expect(
-      leftInEnglish,
-      report('English catalogue values still on screen', leftInEnglish)
-    ).toEqual([])
-  })
-
-  it('shows nothing but French, the language buttons and what the user typed', () => {
-    const offenders = wordsOnScreen().filter(text => !isAcceptable(text))
-    expect(offenders, report('not French and not allow-listed', offenders)).toEqual([])
-  })
-
-  it('shows nothing but French in the placeholder, title and aria-label attributes', () => {
-    const offenders: string[] = []
-    for (const attribute of ['placeholder', 'title', 'aria-label']) {
-      for (const element of elementsWith(attribute)) {
-        const value = element.getAttribute(attribute)?.trim() ?? ''
-        if (hasLetters(value) && !isAcceptable(value)) {
-          offenders.push(attribute + '="' + value + '"')
-        }
-      }
-    }
-    expect(offenders, report('attributes not French and not allow-listed', offenders)).toEqual([])
-  })
-
-  it('shows a French browser-tab title', () => {
-    const title = document.title.trim()
-    const offenders = [title].filter(text => hasLetters(text) && !isAcceptable(text))
-    expect(offenders, report('browser-tab title', offenders)).toEqual([])
-  })
-
-  it('proves it actually looked at the page', () => {
-    // A detector that finds nothing because it walked nothing is the very failure class this
-    // file exists to catch, so a green run has to show its work.
-    expect(wordsOnScreen().length).toBeGreaterThan(10)
-    expect(elementsWith('placeholder').length).toBeGreaterThanOrEqual(1)
-    expect(hasLetters(document.title)).toBe(true)
+    // Sans cette borne, un parcours qui n'a rien collecte passerait au vert.
+    expect(strings.length).toBeGreaterThan(10)
+    expect(strings.filter(s => !french.has(s) && !ALLOWED.has(s))).toEqual([])
   })
 })

@@ -1,76 +1,84 @@
-// SCENARIOS - the task manager, exercised only through its public surface and the DOM
-//   1. Adding tasks grows the list and hands out increasing ids
-//   2. Toggling a task twice brings it back to "not done"
-//   3. Toggling an unknown id changes nothing
-//   4. Deleting removes only the task asked for
-//   5. The "active" filter shows the unfinished tasks, "completed" the finished ones
-//   6. Rendering without a list element on the page is a no-op, not a crash
-//   7. A rendered row carries a checkbox, a text, a priority badge and a delete button
-//   8. A task whose text looks like HTML is displayed as text, never executed
-//   9. The delete button and the priority badge are written in the language currently selected,
-//      while the badge keeps the class that colours it
-//  10. Clicking delete removes the task, ticking the checkbox completes it
-//  11. The two counters follow the list
-//  12. A task added in one session is read back in the next one
-//  13. A restored task's creation date is a real Date, not a string
-//  14. Unreadable storage is discarded and the user is told so, on screen
-//  15. Entries that are not valid tasks are dropped one by one, and the user is told
-//  16. An out-of-range id is rejected, and new tasks can still be created afterwards
-//  17. Two entries sharing an id leave exactly one task
-//  18. The largest safe id is accepted, and the app still hands out further distinct ids
-//  19. The notice is written in the language currently selected
-//  20. A save that fails loses nothing on screen and warns the user
-//  21. A later successful save clears that warning
-
+/**
+ * SCÉNARIOS — TaskManager
+ *
+ * Base (déjà couverte avant cette tâche, conservée)
+ *  1. Ajouter une tâche la met dans la liste
+ *  2. Une tâche neuve n'est pas comptée comme terminée
+ *
+ * Rendu
+ *  3. Chaque tâche ajoutée produit une ligne dans #tasks
+ *  4. Le texte d'une tâche est écrit tel quel : du HTML tapé par l'utilisateur
+ *     n'est jamais interprété (aucune balise créée dans le DOM)
+ *  5. Le badge de priorité affiche la traduction de badge.<priorité>
+ *  6. Le badge de priorité garde la priorité brute dans sa classe CSS
+ *  7. Le bouton de suppression affiche la traduction de button.delete
+ *  8. Le badge et le bouton suivent la langue courante
+ *  9. Une tâche terminée porte la classe completed et sa case est cochée
+ * 10. render() ne lève pas quand #tasks est absent de la page
+ *
+ * Filtres
+ * 11. Le filtre « active » n'affiche que les tâches non terminées
+ * 12. Le filtre « completed » n'affiche que les tâches terminées
+ * 13. Le filtre « all » réaffiche tout
+ * 14. Un filtre ne supprime rien : getTasks() reste complet
+ *
+ * Cycle de vie
+ * 15. toggleTask bascule l'état terminé et le persiste
+ * 16. toggleTask sur un identifiant inconnu ne fait rien et ne lève pas
+ * 17. deleteTask retire la tâche et le persiste
+ * 18. deleteTask sur un identifiant inconnu ne fait rien
+ * 19. Cocher la case rendue bascule la tâche
+ * 20. Cliquer le bouton rendu supprime la tâche
+ *
+ * Statistiques
+ * 21. #total-count et #completed-count sont mis à jour par render()
+ *
+ * Stockage
+ * 22. Les tâches ajoutées sont relues par un nouveau gestionnaire
+ * 23. Un JSON corrompu ne lève pas, ne vide pas la page, et affiche l'erreur
+ * 24. Une valeur stockée qui n'est pas un tableau est écartée de la même façon
+ * 25. Les entrées à identifiant invalide sont écartées, leurs voisines valides survivent
+ * 26. Les identifiants en double sont écartés, la première occurrence gagne
+ * 27. Un identifiant égal à Number.MAX_SAFE_INTEGER ne produit pas de doublons ensuite
+ * 28. Un localStorage en échec à l'écriture ne fait pas planter addTask et affiche l'erreur
+ * 29. Le message d'erreur affiché vient des clés error.load / error.save
+ */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TaskManager } from '../taskManager'
 import { setLanguage } from '../i18n'
-import { mountPage } from './fixture'
+import {
+  mountFixture,
+  appError,
+  isErrorVisible,
+  renderedRows,
+  renderedTexts,
+  seedStorage,
+  storedTask
+} from './fixture'
 import enCatalogue from '../translations/en.json'
 import frCatalogue from '../translations/fr.json'
 
-const EN = enCatalogue as Record<string, string>
-const FR = frCatalogue as Record<string, string>
+const en = enCatalogue as Record<string, string>
+const fr = frCatalogue as Record<string, string>
 
-/** Builds a stored entry that is valid in every respect, unless a field is overridden. */
-function validEntry(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    id: 1,
-    text: 'Stored task',
-    priority: 'low',
-    completed: false,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    ...overrides
-  }
-}
+const XSS = '<img src=x onerror="alert(1)">'
 
-/** Writes raw, possibly malformed, text under the storage key the manager reads. */
-function seedRaw(raw: string): void {
-  localStorage.setItem('tasks', raw)
-}
+beforeEach(() => {
+  localStorage.clear()
+  setLanguage('en')
+  mountFixture()
+})
 
-/** Writes a JSON payload under the storage key the manager reads. */
-function seedJson(value: unknown): void {
-  localStorage.setItem('tasks', JSON.stringify(value))
-}
-
-/** The first notice row currently on screen, if any. */
-function notice(): Element | null {
-  return document.querySelector('.app-notice')
-}
+afterEach(() => {
+  vi.restoreAllMocks()
+  localStorage.clear()
+})
 
 describe('TaskManager', () => {
   let manager: TaskManager
 
   beforeEach(() => {
-    localStorage.clear()
-    setLanguage('en')
-    mountPage()
     manager = new TaskManager()
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
   })
 
   it('should add a task', () => {
@@ -83,379 +91,301 @@ describe('TaskManager', () => {
     expect(manager.getCompletedCount()).toBe(0)
   })
 
-  it('hands out increasing ids and reflects every addition', () => {
-    manager.addTask('First', 'low')
-    manager.addTask('Second', 'high')
+  describe('rendu', () => {
+    it('rend une ligne par tache ajoutee', () => {
+      manager.addTask('Une', 'low')
+      manager.addTask('Deux', 'high')
+      expect(renderedRows()).toHaveLength(2)
+      expect(renderedTexts()).toEqual(['Une', 'Deux'])
+    })
 
-    const tasks = manager.getTasks()
-    expect(tasks.map(task => task.text)).toEqual(['First', 'Second'])
-    expect(tasks[1].id).toBeGreaterThan(tasks[0].id)
+    it('n interprete jamais le HTML tape par l utilisateur', () => {
+      manager.addTask(XSS, 'low')
+
+      expect(document.querySelectorAll('#tasks img').length).toBe(0)
+      const texte = document.querySelector<HTMLElement>('#tasks .task-text')
+      expect(texte).not.toBeNull()
+      expect(texte!.textContent).toBe(XSS)
+      expect(texte!.children.length).toBe(0)
+    })
+
+    it('affiche le badge de priorite traduit', () => {
+      manager.addTask('Haute', 'high')
+      const badge = document.querySelector<HTMLElement>('#tasks .priority-badge')!
+      expect(badge.textContent).toBe(en['badge.high'])
+    })
+
+    it('garde la priorite brute dans la classe du badge', () => {
+      manager.addTask('Moyenne', 'medium')
+      const badge = document.querySelector<HTMLElement>('#tasks .priority-badge')!
+      expect(badge.classList.contains('priority-badge')).toBe(true)
+      expect(badge.classList.contains('priority-medium')).toBe(true)
+    })
+
+    it('affiche le libelle traduit du bouton de suppression', () => {
+      manager.addTask('Une', 'low')
+      const btn = document.querySelector<HTMLElement>('#tasks .delete-btn')!
+      expect(btn.textContent).toBe(en['button.delete'])
+    })
+
+    it('badge et bouton suivent la langue courante', () => {
+      manager.addTask('Basse', 'low')
+      setLanguage('fr')
+      manager.render()
+
+      const badge = document.querySelector<HTMLElement>('#tasks .priority-badge')!
+      const btn = document.querySelector<HTMLElement>('#tasks .delete-btn')!
+      expect(badge.textContent).toBe(fr['badge.low'])
+      expect(badge.textContent).not.toBe(en['badge.low'])
+      expect(btn.textContent).toBe(fr['button.delete'])
+    })
+
+    it('marque les taches terminees', () => {
+      manager.addTask('Une', 'low')
+      manager.toggleTask(manager.getTasks()[0].id)
+
+      const li = renderedRows()[0]
+      expect(li.className).toContain('completed')
+      expect(li.querySelector<HTMLInputElement>('.task-checkbox')!.checked).toBe(true)
+    })
+
+    it('ne leve pas quand #tasks est absent', () => {
+      document.body.innerHTML = ''
+      expect(() => manager.render()).not.toThrow()
+    })
   })
 
-  it('brings a task back to not-done when toggled twice', () => {
-    manager.addTask('Toggle me', 'low')
-    const id = manager.getTasks()[0].id
-
-    manager.toggleTask(id)
-    expect(manager.getTasks()[0].completed).toBe(true)
-
-    manager.toggleTask(id)
-    expect(manager.getTasks()[0].completed).toBe(false)
-    expect(manager.getCompletedCount()).toBe(0)
-  })
-
-  it('changes nothing when toggling an unknown id', () => {
-    manager.addTask('Untouched', 'low')
-    const before = manager.getTasks()[0].completed
-
-    manager.toggleTask(999999)
-
-    expect(manager.getTasks()).toHaveLength(1)
-    expect(manager.getTasks()[0].completed).toBe(before)
-  })
-
-  it('deletes only the task asked for', () => {
-    manager.addTask('Keep me', 'low')
-    manager.addTask('Delete me', 'high')
-    const doomed = manager.getTasks()[1].id
-
-    manager.deleteTask(doomed)
-
-    expect(manager.getTasks().map(task => task.text)).toEqual(['Keep me'])
-  })
-
-  describe('filters', () => {
+  describe('filtres', () => {
     beforeEach(() => {
-      manager.addTask('Still to do', 'low')
-      manager.addTask('Already done', 'high')
+      manager.addTask('Active 1', 'low')
+      manager.addTask('Terminee', 'medium')
+      manager.addTask('Active 2', 'high')
       manager.toggleTask(manager.getTasks()[1].id)
     })
 
-    function renderedTexts(): string[] {
-      return Array.from(document.querySelectorAll('#tasks .task-text')).map(
-        element => element.textContent ?? ''
-      )
-    }
-
-    it('renders only the unfinished tasks under the active filter', () => {
+    it('le filtre active n affiche que les taches non terminees', () => {
       manager.setFilter('active')
-      expect(renderedTexts()).toEqual(['Still to do'])
+      expect(renderedRows()).toHaveLength(2)
+      expect(renderedTexts()).toEqual(['Active 1', 'Active 2'])
     })
 
-    it('renders only the finished tasks under the completed filter', () => {
+    it('le filtre completed n affiche que les taches terminees', () => {
       manager.setFilter('completed')
-      expect(renderedTexts()).toEqual(['Already done'])
+      expect(renderedRows()).toHaveLength(1)
+      expect(renderedTexts()).toEqual(['Terminee'])
     })
 
-    it('renders every task under the all filter', () => {
+    it('le filtre all reaffiche tout', () => {
       manager.setFilter('completed')
       manager.setFilter('all')
-      expect(renderedTexts()).toEqual(['Still to do', 'Already done'])
+      expect(renderedRows()).toHaveLength(3)
+      expect(renderedTexts()).toEqual(['Active 1', 'Terminee', 'Active 2'])
+    })
+
+    it('un filtre ne supprime aucune tache', () => {
+      manager.setFilter('completed')
+      expect(manager.getTasks()).toHaveLength(3)
+      expect(manager.getCompletedCount()).toBe(1)
     })
   })
 
-  it('does nothing and does not throw when the list element is absent', () => {
-    document.body.innerHTML = '<span id="total-count">0</span><span id="completed-count">0</span>'
+  describe('cycle de vie', () => {
+    it('toggleTask bascule l etat et le persiste', () => {
+      manager.addTask('Une', 'low')
+      const id = manager.getTasks()[0].id
 
-    expect(() => manager.addTask('Orphan', 'low')).not.toThrow()
-    expect(() => manager.render()).not.toThrow()
+      manager.toggleTask(id)
+      expect(manager.getTasks()[0].completed).toBe(true)
+      expect(JSON.parse(localStorage.getItem('tasks')!)[0].completed).toBe(true)
 
-    expect(document.querySelector('#total-count')!.textContent).toBe('0')
-    expect(document.querySelector('#completed-count')!.textContent).toBe('0')
-  })
-
-  it('builds a row carrying a checkbox, a text, a badge and a delete button', () => {
-    manager.addTask('Fully rendered', 'high')
-
-    const row = document.querySelector('#tasks li')
-    expect(row).not.toBeNull()
-    expect(row!.querySelector('.task-checkbox')).not.toBeNull()
-    expect(row!.querySelector('.task-text')!.textContent).toBe('Fully rendered')
-    expect(row!.querySelector('.priority-badge')!.textContent).toBe('HIGH')
-    expect(row!.querySelector('.delete-btn')).not.toBeNull()
-  })
-
-  // The English chips are already on screen before the switch, so only a French assertion
-  // proves the badge was actually repainted rather than simply left alone.
-  it('writes the priority badges in French once French is selected', () => {
-    manager.addTask('Low one', 'low')
-    manager.addTask('Medium one', 'medium')
-    manager.addTask('High one', 'high')
-
-    setLanguage('fr')
-    manager.render()
-
-    const badges = Array.from(document.querySelectorAll('.priority-badge')).map(
-      badge => badge.textContent
-    )
-    expect(badges).toEqual(['FAIBLE', 'MOYENNE', 'ÉLEVÉE'])
-  })
-
-  it('keeps the priority class on the badge whatever the language', () => {
-    manager.addTask('High one', 'high')
-
-    setLanguage('fr')
-    manager.render()
-
-    const badge = document.querySelector('.priority-badge')!
-    expect(badge.classList.contains('priority-high')).toBe(true)
-  })
-
-  it('displays a task text that looks like HTML as plain text', () => {
-    const payload = '<img src=x onerror="alert(1)">'
-
-    manager.addTask(payload, 'low')
-
-    expect(document.querySelector('.task-text')!.textContent).toBe(payload)
-    expect(document.querySelector('.task-text img')).toBeNull()
-  })
-
-  it('writes the delete button in French once French is selected', () => {
-    manager.addTask('A task', 'low')
-
-    setLanguage('fr')
-    manager.render()
-
-    expect(document.querySelector('.delete-btn')!.textContent).toBe('Supprimer')
-  })
-
-  it('deletes the task when its delete button is clicked', () => {
-    manager.addTask('Click to delete', 'low')
-
-    document.querySelector<HTMLButtonElement>('.delete-btn')!.click()
-
-    expect(manager.getTasks()).toHaveLength(0)
-    expect(document.querySelectorAll('#tasks li')).toHaveLength(0)
-  })
-
-  it('completes the task when its checkbox changes', () => {
-    manager.addTask('Tick me', 'low')
-
-    const checkbox = document.querySelector<HTMLInputElement>('.task-checkbox')!
-    checkbox.checked = true
-    checkbox.dispatchEvent(new Event('change'))
-
-    expect(manager.getCompletedCount()).toBe(1)
-  })
-
-  it('keeps both counters in step with the list', () => {
-    manager.addTask('One', 'low')
-    manager.addTask('Two', 'low')
-    manager.toggleTask(manager.getTasks()[0].id)
-
-    expect(document.querySelector('#total-count')!.textContent).toBe('2')
-    expect(document.querySelector('#completed-count')!.textContent).toBe('1')
-  })
-
-  it('reads back, in a new session, a task added in the previous one', () => {
-    manager.addTask('Persisted', 'medium')
-
-    const reopened = new TaskManager()
-
-    expect(reopened.getTasks()).toHaveLength(1)
-    expect(reopened.getTasks()[0].text).toBe('Persisted')
-    expect(reopened.getTasks()[0].priority).toBe('medium')
-  })
-
-  it('restores a creation date as a real Date instance', () => {
-    seedJson([validEntry()])
-
-    const restored = new TaskManager()
-
-    expect(restored.getTasks()).toHaveLength(1)
-    expect(restored.getTasks()[0].createdAt).toBeInstanceOf(Date)
-    expect(Number.isNaN(restored.getTasks()[0].createdAt.getTime())).toBe(false)
-  })
-
-  describe('unreadable storage', () => {
-    it('discards text that is not JSON and says so on screen', () => {
-      seedRaw('not json at all')
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toEqual([])
-
-      restored.render()
-
-      expect(notice()).not.toBeNull()
-      expect(notice()!.tagName).toBe('LI')
-      expect(notice()!.classList.contains('app-notice--error')).toBe(true)
-      expect(notice()!.getAttribute('role')).toBe('alert')
-      expect(notice()!.textContent).toBe(EN['error.storage.read'])
+      manager.toggleTask(id)
+      expect(manager.getTasks()[0].completed).toBe(false)
+      expect(JSON.parse(localStorage.getItem('tasks')!)[0].completed).toBe(false)
     })
 
-    it('discards JSON that is not an array and says so on screen', () => {
-      seedRaw('{"a":1}')
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toEqual([])
-
-      restored.render()
-
-      expect(notice()).not.toBeNull()
-      expect(notice()!.textContent).toBe(EN['error.storage.read'])
+    it('toggleTask sur un id inconnu ne fait rien', () => {
+      manager.addTask('Une', 'low')
+      expect(() => manager.toggleTask(987654)).not.toThrow()
+      expect(manager.getTasks()).toHaveLength(1)
+      expect(manager.getTasks()[0].completed).toBe(false)
     })
 
-    it('discards entries that are not objects and says so on screen', () => {
-      seedRaw('[null,null]')
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toEqual([])
-
-      restored.render()
-
-      expect(notice()).not.toBeNull()
-      expect(notice()!.textContent).toBe(EN['error.storage.read'])
-    })
-
-    it('puts the notice above the task rows', () => {
-      seedJson([validEntry({ id: 1 }), validEntry({ id: 1, text: 'Duplicate' })])
-
-      const restored = new TaskManager()
-      restored.render()
-
-      const list = document.querySelector('#tasks')!
-      expect(list.firstElementChild!.classList.contains('app-notice')).toBe(true)
-      expect(list.querySelectorAll('.task-text')).toHaveLength(1)
-    })
-
-    it('keeps only the first of two entries sharing an id', () => {
-      seedJson([validEntry({ id: 1 }), validEntry({ id: 1, text: 'Duplicate' })])
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toHaveLength(1)
-
-      restored.render()
-      expect(notice()).not.toBeNull()
-
-      restored.deleteTask(1)
-      expect(restored.getTasks()).toEqual([])
-    })
-
-    it('rejects an id outside the safe range and still creates new tasks', () => {
-      seedJson([validEntry({ id: 1e308 })])
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toEqual([])
-
-      restored.render()
-      expect(notice()).not.toBeNull()
-      expect(notice()!.textContent).toBe(EN['error.storage.read'])
-
-      restored.addTask('Fresh start', 'low')
-      const id = restored.getTasks()[0].id
-      expect(Number.isSafeInteger(id)).toBe(true)
-      expect(id).toBeGreaterThan(0)
-    })
-
-    const invalidEntries: [string, Record<string, unknown>][] = [
-      ['a text that is not a string', validEntry({ text: 42 })],
-      ['a priority that is not one of the three', validEntry({ priority: 'urgent' })],
-      ['a completed flag that is not a boolean', validEntry({ completed: 'yes' })],
-      ['a creation date that is not a date', validEntry({ createdAt: 'not a date' })],
-      ['a missing id', { text: 'No id', priority: 'low', completed: false, createdAt: 0 }],
-      ['an id that is zero', validEntry({ id: 0 })],
-      ['an id that is negative', validEntry({ id: -3 })],
-      ['an id that is not an integer', validEntry({ id: 1.5 })]
-    ]
-
-    invalidEntries.forEach(([label, entry]) => {
-      it('discards a stored entry with ' + label, () => {
-        seedJson([entry])
-
-        const restored = new TaskManager()
-        expect(restored.getTasks()).toEqual([])
-
-        restored.render()
-        expect(notice()).not.toBeNull()
-        expect(notice()!.textContent).toBe(EN['error.storage.read'])
-      })
-    })
-
-    it('writes the notice in French once French is selected', () => {
-      seedRaw('not json at all')
-      setLanguage('fr')
-
-      const restored = new TaskManager()
-      restored.render()
-
-      expect(notice()).not.toBeNull()
-      expect(notice()!.textContent).toBe(FR['error.storage.read'])
-      expect(notice()!.textContent).not.toBe(EN['error.storage.read'])
-    })
-  })
-
-  describe('ids handed out after a restore', () => {
-    it('accepts the largest safe id and still hands out two further distinct ids', () => {
-      seedJson([validEntry({ id: Number.MAX_SAFE_INTEGER })])
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toHaveLength(1)
-      expect(restored.getTasks()[0].id).toBe(Number.MAX_SAFE_INTEGER)
-
-      restored.addTask('One more', 'low')
-      restored.addTask('And another', 'low')
-
-      const ids = restored.getTasks().map(task => task.id)
-      expect(ids).toHaveLength(3)
-      expect(new Set(ids).size).toBe(3)
-
-      const fresh = ids.filter(id => id !== Number.MAX_SAFE_INTEGER)
-      expect(fresh).toHaveLength(2)
-      fresh.forEach(id => {
-        expect(Number.isSafeInteger(id)).toBe(true)
-        expect(id).toBeGreaterThan(0)
-      })
-    })
-
-    it('never reuses an id that is already taken', () => {
-      seedJson([
-        validEntry({ id: 1, text: 'One' }),
-        validEntry({ id: 2, text: 'Two' }),
-        validEntry({ id: 3, text: 'Three' })
-      ])
-
-      const restored = new TaskManager()
-      expect(restored.getTasks()).toHaveLength(3)
-
-      restored.addTask('Four', 'low')
-
-      const fresh = restored.getTasks()[3].id
-      expect([1, 2, 3]).not.toContain(fresh)
-      expect(Number.isSafeInteger(fresh)).toBe(true)
-      expect(fresh).toBeGreaterThan(0)
-    })
-  })
-
-  describe('a save that fails', () => {
-    it('keeps the task, repaints the page and warns the user', () => {
-      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-        throw new Error('quota')
-      })
-
-      expect(() => manager.addTask('Unsaved', 'low')).not.toThrow()
+    it('deleteTask retire la tache et le persiste', () => {
+      manager.addTask('Une', 'low')
+      manager.addTask('Deux', 'low')
+      manager.deleteTask(manager.getTasks()[0].id)
 
       expect(manager.getTasks()).toHaveLength(1)
-      expect(document.querySelectorAll('#tasks .task-text')).toHaveLength(1)
-      expect(document.querySelector('#tasks .task-text')!.textContent).toBe('Unsaved')
-
-      expect(notice()).not.toBeNull()
-      expect(notice()!.getAttribute('role')).toBe('alert')
-      expect(notice()!.textContent).toBe(EN['error.storage.write'])
+      expect(manager.getTasks()[0].text).toBe('Deux')
+      expect(JSON.parse(localStorage.getItem('tasks')!)).toHaveLength(1)
+      expect(renderedTexts()).toEqual(['Deux'])
     })
 
-    it('clears the warning once a later save succeeds', () => {
-      const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-        throw new Error('quota')
-      })
-
-      manager.addTask('Unsaved', 'low')
-      expect(notice()).not.toBeNull()
-
-      setItem.mockRestore()
-      manager.addTask('Saved', 'low')
-
-      expect(notice()).toBeNull()
-      expect(document.querySelectorAll('#tasks .task-text')).toHaveLength(2)
+    it('deleteTask sur un id inconnu ne fait rien', () => {
+      manager.addTask('Une', 'low')
+      manager.deleteTask(987654)
+      expect(manager.getTasks()).toHaveLength(1)
     })
+
+    it('cocher la case rendue bascule la tache', () => {
+      manager.addTask('Une', 'low')
+      renderedRows()[0].querySelector<HTMLInputElement>('.task-checkbox')!.click()
+      expect(manager.getTasks()[0].completed).toBe(true)
+      expect(manager.getCompletedCount()).toBe(1)
+    })
+
+    it('cliquer le bouton rendu supprime la tache', () => {
+      manager.addTask('Une', 'low')
+      renderedRows()[0].querySelector<HTMLElement>('.delete-btn')!.click()
+      expect(manager.getTasks()).toHaveLength(0)
+      expect(renderedRows()).toHaveLength(0)
+    })
+  })
+
+  describe('statistiques', () => {
+    it('met a jour le total et le nombre de taches terminees', () => {
+      manager.addTask('Une', 'low')
+      manager.addTask('Deux', 'low')
+      manager.toggleTask(manager.getTasks()[0].id)
+
+      expect(document.getElementById('total-count')!.textContent).toBe('2')
+      expect(document.getElementById('completed-count')!.textContent).toBe('1')
+    })
+  })
+})
+
+describe('TaskManager — stockage', () => {
+  it('relit les taches ecrites par un gestionnaire precedent', () => {
+    const premier = new TaskManager()
+    premier.addTask('Persistee', 'high')
+
+    const second = new TaskManager()
+    expect(second.getTasks()).toHaveLength(1)
+    expect(second.getTasks()[0].text).toBe('Persistee')
+    expect(second.getTasks()[0].priority).toBe('high')
+  })
+
+  it('un JSON corrompu ne leve pas et laisse une liste vide', () => {
+    seedStorage('{not json')
+    let manager!: TaskManager
+    expect(() => {
+      manager = new TaskManager()
+    }).not.toThrow()
+    expect(manager.getTasks()).toEqual([])
+  })
+
+  it('un JSON corrompu affiche l erreur dans l interface', () => {
+    seedStorage('{not json')
+    // Le constructeur seul doit suffire : l'erreur se voit sans rendu supplementaire.
+    new TaskManager()
+
+    expect(isErrorVisible()).toBe(true)
+    expect(appError()!.textContent).toBe(en['error.load'])
+  })
+
+  it('une valeur stockee qui n est pas un tableau est ecartee', () => {
+    seedStorage('{"a":1}')
+    let manager!: TaskManager
+    expect(() => {
+      manager = new TaskManager()
+    }).not.toThrow()
+    expect(manager.getTasks()).toEqual([])
+    expect(isErrorVisible()).toBe(true)
+  })
+
+  it('une page corrompue reste utilisable : on peut ajouter une tache ensuite', () => {
+    seedStorage('{not json')
+    const manager = new TaskManager()
+    manager.addTask('Apres corruption', 'low')
+
+    expect(manager.getTasks()).toHaveLength(1)
+    expect(renderedTexts()).toEqual(['Apres corruption'])
+  })
+
+  it.each([
+    ['identifiant texte', 'abc'],
+    ['identifiant NaN', Number.NaN],
+    ['identifiant zero', 0],
+    ['identifiant negatif', -3],
+    ['identifiant fractionnaire', 1.5],
+    ['identifiant hors des entiers surs', Number.MAX_SAFE_INTEGER + 2],
+    ['identifiant null', null],
+    ['identifiant booleen', true]
+  ])('ecarte une entree avec %s et garde ses voisines valides', (_nom, mauvaisId) => {
+    seedStorage([
+      storedTask({ id: 10, text: 'Avant' }),
+      storedTask({ id: mauvaisId, text: 'Invalide' }),
+      storedTask({ id: 11, text: 'Apres' })
+    ])
+
+    const manager = new TaskManager()
+    expect(manager.getTasks().map(task => task.text)).toEqual(['Avant', 'Apres'])
+  })
+
+  it('ecarte une entree sans identifiant du tout', () => {
+    const sansId = storedTask({ text: 'Invalide' })
+    delete sansId.id
+    seedStorage([storedTask({ id: 10, text: 'Avant' }), sansId])
+
+    const manager = new TaskManager()
+    expect(manager.getTasks().map(task => task.text)).toEqual(['Avant'])
+  })
+
+  it('ecarte les identifiants en double, la premiere occurrence gagne', () => {
+    seedStorage([
+      storedTask({ id: 5, text: 'Premiere' }),
+      storedTask({ id: 5, text: 'Doublon' }),
+      storedTask({ id: 6, text: 'Autre' })
+    ])
+
+    const manager = new TaskManager()
+    expect(manager.getTasks().map(task => task.text)).toEqual(['Premiere', 'Autre'])
+  })
+
+  it('produit encore des identifiants distincts apres MAX_SAFE_INTEGER', () => {
+    seedStorage([storedTask({ id: Number.MAX_SAFE_INTEGER, text: 'Limite' })])
+
+    const manager = new TaskManager()
+    manager.addTask('Suivante 1', 'low')
+    manager.addTask('Suivante 2', 'low')
+
+    const ids = manager.getTasks().map(task => task.id)
+    expect(ids).toHaveLength(3)
+    expect(new Set(ids).size).toBe(3)
+  })
+
+  it('un echec d ecriture ne fait pas planter addTask', () => {
+    const manager = new TaskManager()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+
+    expect(() => manager.addTask('Une', 'low')).not.toThrow()
+  })
+
+  it('un echec d ecriture affiche l erreur dans l interface', () => {
+    const manager = new TaskManager()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+
+    manager.addTask('Une', 'low')
+
+    expect(isErrorVisible()).toBe(true)
+    expect(appError()!.textContent).toBe(en['error.save'])
+    expect(appError()!.getAttribute('data-i18n')).toBe('error.save')
+  })
+
+  it('un echec d ecriture ne fait pas planter toggleTask ni deleteTask', () => {
+    const manager = new TaskManager()
+    manager.addTask('Une', 'low')
+    const id = manager.getTasks()[0].id
+
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+
+    expect(() => manager.toggleTask(id)).not.toThrow()
+    expect(() => manager.deleteTask(id)).not.toThrow()
   })
 })

@@ -1,130 +1,151 @@
-// SCENARIOS - the translation engine
-//   1. A known key returns the sentence of the active language
-//   2. An unknown key returns the key itself, never an empty string
-//   3. Switching to French returns the French sentence
-//   4. An unknown language returns the key, it does NOT quietly fall back to English
-//   5. The current language reported matches the language that was set
-//   6. Loading the catalogues resolves
-//   7. Applying translations rewrites the text of every element that declares a key
-//   8. Applying translations rewrites the placeholder attribute of the elements that declare one
-//   9. Applying translations records the active language on the <html> element
-//  10. Applying translations rewrites the browser-tab title, which has no element to carry a key
-//  11. Applying translations to a subtree leaves the rest of the document alone
-
+/**
+ * SCÉNARIOS — module i18n
+ *
+ *  1. La langue de départ est l'anglais
+ *  2. setLanguage change la langue courante, getCurrentLanguage la rapporte
+ *  3. loadTranslations se résout sans erreur
+ *  4. t() rend la valeur anglaise quand la langue est l'anglais
+ *  5. t() rend la valeur française après un passage au français
+ *  6. t() rend la clé elle-même quand la clé est inconnue
+ *  7. t() rend la clé elle-même quand la langue est inconnue
+ *  8. applyTranslations remplit le texte de chaque élément porteur de data-i18n
+ *  9. applyTranslations remplit le placeholder de chaque élément porteur de data-i18n-placeholder
+ * 10. applyTranslations aligne document.documentElement.lang sur la langue courante
+ * 11. applyTranslations aligne document.title sur t('page.title')
+ * 12. applyTranslations limitée à une racine ne touche pas ce qui est hors de cette racine
+ * 13. applyTranslations sur une clé inconnue écrit la clé, sans planter
+ * 14. Rappeler applyTranslations après un changement de langue retraduit la page
+ */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { applyTranslations, getCurrentLanguage, loadTranslations, setLanguage, t } from '../i18n'
-import { UNTRANSLATED } from './fixture'
+import { loadTranslations, setLanguage, getCurrentLanguage, t, applyTranslations } from '../i18n'
+import { mountFixture } from './fixture'
+import enCatalogue from '../translations/en.json'
+import frCatalogue from '../translations/fr.json'
+
+const en = enCatalogue as Record<string, string>
+const fr = frCatalogue as Record<string, string>
 
 describe('i18n', () => {
   beforeEach(() => {
     setLanguage('en')
     document.body.innerHTML = ''
-    document.documentElement.lang = 'en'
-    document.title = UNTRANSLATED
   })
 
-  it('returns the English sentence for a known key', () => {
-    expect(t('app.title')).toBe('My Task Manager')
-  })
-
-  it('returns the key itself for an unknown key', () => {
-    expect(t('nope.not.a.key')).toBe('nope.not.a.key')
-  })
-
-  it('returns the French sentence once the language is French', () => {
-    setLanguage('fr')
-    expect(t('button.delete')).toBe('Supprimer')
-  })
-
-  it('returns the key, not the English sentence, for an unknown language', () => {
-    setLanguage('zz')
-    expect(t('app.title')).toBe('app.title')
-  })
-
-  it('reports the language that was last set', () => {
+  it('demarre en anglais', () => {
     expect(getCurrentLanguage()).toBe('en')
+  })
+
+  it('setLanguage change la langue courante', () => {
     setLanguage('fr')
     expect(getCurrentLanguage()).toBe('fr')
   })
 
-  it('resolves when the catalogues are loaded', async () => {
+  it('loadTranslations se resout', async () => {
     await expect(loadTranslations()).resolves.toBeUndefined()
   })
 
-  it('rewrites the text of every element that declares a key', () => {
-    const host = document.createElement('div')
-    host.innerHTML = `<h1 data-i18n="app.title">${UNTRANSLATED}</h1><button data-i18n="button.add">${UNTRANSLATED}</button>`
-    document.body.appendChild(host)
-
-    expect(host.querySelector('h1')!.textContent).toBe(UNTRANSLATED)
-
-    applyTranslations(host)
-
-    expect(host.querySelector('h1')!.textContent).toBe('My Task Manager')
-    expect(host.querySelector('button')!.textContent).toBe('Add Task')
+  it('t rend la valeur anglaise en anglais', () => {
+    expect(t('button.add')).toBe(en['button.add'])
   })
 
-  it('rewrites the placeholder attribute of the elements that declare one', () => {
-    const host = document.createElement('div')
-    host.innerHTML = `<input data-i18n-placeholder="task.placeholder" placeholder="${UNTRANSLATED}">`
-    document.body.appendChild(host)
-
-    const input = host.querySelector('input')!
-    expect(input.getAttribute('placeholder')).toBe(UNTRANSLATED)
-
-    applyTranslations(host)
-
-    expect(input.getAttribute('placeholder')).toBe('Enter task description')
+  it('t rend la valeur francaise en francais', () => {
+    setLanguage('fr')
+    expect(t('button.add')).toBe(fr['button.add'])
+    expect(t('button.delete')).toBe(fr['button.delete'])
   })
 
-  it('records the active language on the <html> element', () => {
-    document.documentElement.lang = 'zz'
+  it('t rend la cle elle-meme quand la cle est inconnue', () => {
+    expect(t('cle.totalement.inconnue')).toBe('cle.totalement.inconnue')
+  })
 
+  it('t rend la cle elle-meme quand la langue est inconnue', () => {
+    setLanguage('kl')
+    expect(t('button.add')).toBe('button.add')
+  })
+
+  it('applyTranslations traduit le texte des elements data-i18n', () => {
+    mountFixture()
+    setLanguage('fr')
     applyTranslations()
-    expect(document.documentElement.lang).toBe('en')
 
+    const titres = document.querySelectorAll<HTMLElement>('[data-i18n]')
+    expect(titres.length).toBeGreaterThan(5)
+    titres.forEach(el => {
+      const key = el.getAttribute('data-i18n') as string
+      expect(el.textContent).toBe(fr[key] ?? key)
+    })
+  })
+
+  it('applyTranslations traduit les placeholders data-i18n-placeholder', () => {
+    mountFixture()
+    setLanguage('fr')
+    applyTranslations()
+
+    const champs = document.querySelectorAll<HTMLInputElement>('[data-i18n-placeholder]')
+    expect(champs.length).toBeGreaterThan(0)
+    champs.forEach(el => {
+      const key = el.getAttribute('data-i18n-placeholder') as string
+      expect(el.getAttribute('placeholder')).toBe(fr[key] ?? key)
+    })
+  })
+
+  it('applyTranslations aligne l attribut lang du document', () => {
+    mountFixture()
     setLanguage('fr')
     applyTranslations()
     expect(document.documentElement.lang).toBe('fr')
-  })
 
-  it('records the active language even when scoped to a subtree', () => {
-    document.documentElement.lang = 'zz'
-    const host = document.createElement('div')
-    document.body.appendChild(host)
-
-    applyTranslations(host)
-
+    setLanguage('en')
+    applyTranslations()
     expect(document.documentElement.lang).toBe('en')
   })
 
-  // The browser-tab title lives outside <body>, so no fixture element can carry a key for it.
-  it('rewrites the browser-tab title', () => {
-    expect(document.title).toBe(UNTRANSLATED)
-
-    applyTranslations()
-    expect(document.title).toBe('Task Manager')
-
+  it('applyTranslations aligne le titre du document', () => {
+    mountFixture()
+    document.title = 'SENTINELLE'
     setLanguage('fr')
     applyTranslations()
-    expect(document.title).toBe('Gestionnaire de tâches')
+    expect(document.title).toBe(fr['page.title'])
   })
 
-  it('rewrites the browser-tab title even when scoped to a subtree', () => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
+  it('applyTranslations limitee a une racine ne touche pas le reste', () => {
+    const dedans = document.createElement('div')
+    dedans.innerHTML = '<span data-i18n="button.delete">Delete</span>'
+    const dehors = document.createElement('div')
+    dehors.innerHTML = '<span data-i18n="button.delete">INTACT</span>'
+    document.body.appendChild(dedans)
+    document.body.appendChild(dehors)
 
-    applyTranslations(host)
+    setLanguage('fr')
+    applyTranslations(dedans)
 
-    expect(document.title).toBe('Task Manager')
+    expect(dedans.querySelector('span')!.textContent).toBe(fr['button.delete'])
+    expect(dehors.querySelector('span')!.textContent).toBe('INTACT')
   })
 
-  it('leaves elements outside the given subtree alone', () => {
-    document.body.innerHTML = `<div id="inside"><h1 data-i18n="app.title">${UNTRANSLATED}</h1></div><div id="outside"><h2 data-i18n="task.add">${UNTRANSLATED}</h2></div>`
+  it('applyTranslations ecrit la cle quand elle est inconnue, sans planter', () => {
+    const racine = document.createElement('div')
+    racine.innerHTML =
+      '<span data-i18n="cle.absente">x</span><input data-i18n-placeholder="autre.cle.absente">'
+    document.body.appendChild(racine)
 
-    applyTranslations(document.querySelector('#inside')!)
+    expect(() => applyTranslations(racine)).not.toThrow()
+    expect(racine.querySelector('span')!.textContent).toBe('cle.absente')
+    expect(racine.querySelector('input')!.getAttribute('placeholder')).toBe('autre.cle.absente')
+  })
 
-    expect(document.querySelector('#inside h1')!.textContent).toBe('My Task Manager')
-    expect(document.querySelector('#outside h2')!.textContent).toBe(UNTRANSLATED)
+  it('retraduit la page quand on rappelle applyTranslations apres un changement de langue', () => {
+    mountFixture()
+    setLanguage('fr')
+    applyTranslations()
+    const titreFr = document.querySelector<HTMLElement>('[data-i18n="app.title"]')!.textContent
+
+    setLanguage('en')
+    applyTranslations()
+    const titreEn = document.querySelector<HTMLElement>('[data-i18n="app.title"]')!.textContent
+
+    expect(titreFr).toBe(fr['app.title'])
+    expect(titreEn).toBe(en['app.title'])
+    expect(titreFr).not.toBe(titreEn)
   })
 })

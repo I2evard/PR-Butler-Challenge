@@ -9,74 +9,75 @@ const translations: Translations = {
 }
 
 /**
- * Makes the catalogues available to {@link t}.
+ * Point d'entrée asynchrone du chargement des catalogues.
  *
- * Both files are bundled statically, so there is nothing to fetch. The function stays
- * asynchronous so that moving the catalogues behind a network call later would not change a
- * single call site.
- *
- * @returns a promise that settles once the catalogues can be read.
+ * Les deux catalogues sont aujourd'hui importés statiquement et intégrés au paquet :
+ * la promesse est déjà résolue. La signature reste asynchrone pour que le passage à
+ * un chargement par requête réseau ne force pas à réécrire les appelants.
  */
 export async function loadTranslations(): Promise<void> {
+  // Translations are imported statically
   return Promise.resolve()
 }
 
 /**
- * Chooses which catalogue {@link t} reads from.
+ * Choisit la langue dans laquelle `t()` répondra désormais.
  *
- * An unrecognised code is accepted rather than replaced by a fallback: `t()` then returns each
- * key unchanged, which puts a bad language code on screen instead of hiding it behind English.
+ * Ne touche pas à la page : c'est `applyTranslations()` qui la repeint. Les deux sont
+ * séparés parce que le rendu des tâches doit être rejoué entre les deux.
  *
- * @param lang - the language code to activate, for instance `'en'` or `'fr'`.
+ * @param lang Code de langue (`en`, `fr`). Un code inconnu fait retomber `t()` sur les clés.
  */
 export function setLanguage(lang: string): void {
   currentLanguage = lang
 }
 
 /**
- * Resolves one user-facing string in the active catalogue.
+ * Rend la chaîne traduite d'une clé.
  *
- * @param key - the catalogue key, for instance `'button.delete'`.
- * @returns the translated string, or the key itself when either the key or the language is
- *          unknown — never an empty string, so a gap in the catalogue stays visible.
+ * Retombe sur la clé elle-même quand elle manque au catalogue, ou quand la langue
+ * courante est inconnue : une clé nue à l'écran est un défaut visible, alors qu'une
+ * chaîne vide passerait inaperçue jusqu'en production.
+ *
+ * @param key Clé de catalogue, par exemple `button.add`.
+ * @returns La traduction, ou la clé si elle n'existe pas.
  */
 export function t(key: string): string {
   return translations[currentLanguage]?.[key] || key
 }
 
 /**
- * Reports which catalogue {@link t} is reading from.
+ * Rend la langue actuellement sélectionnée.
  *
- * @returns the active language code.
+ * Sert aux appelants qui doivent décider quelque chose d'après la langue plutôt que
+ * de traduire une chaîne — par exemple aligner l'attribut `lang` du document.
  */
 export function getCurrentLanguage(): string {
   return currentLanguage
 }
 
 /**
- * Pushes the active catalogue into the page.
+ * Repeint la page dans la langue courante.
  *
- * Rewrites the `textContent` of every `[data-i18n]` element and the `placeholder` of every
- * `[data-i18n-placeholder]` element found under `root`.
+ * Sans elle, un catalogue français complet n'affiche rien de français : changer de
+ * langue ne faisait que déplacer une classe CSS. Elle traduit tout élément porteur de
+ * `data-i18n` (son texte) ou de `data-i18n-placeholder` (son attribut `placeholder`),
+ * puis aligne l'attribut `lang` du document et son titre — deux choses qu'aucun
+ * élément ne porte et que personne d'autre ne met à jour.
  *
- * It then touches two things `root` does not scope, deliberately: `document.documentElement.lang`
- * and `document.title`. Both are global by nature and neither can be reached through
- * `textContent`, yet both are visible — the first to a screen reader, which otherwise pronounces
- * French with an English voice, and the second in the browser tab. Scoping them to the subtree
- * would mean a caller who translates one panel leaves the tab reading the old language, so they
- * happen on every pass regardless of `root`.
+ * Le titre est réécrit à chaque appel, y compris en anglais : c'est ce qui garantit
+ * qu'un démarrage qui oublierait de traduire se voie tout de suite.
  *
- * @param root - the subtree whose elements are translated; defaults to the whole document.
+ * @param root Sous-arbre à traduire. Par défaut le document entier ; une racine plus
+ *             étroite permet de ne repeindre qu'un fragment fraîchement construit.
  */
 export function applyTranslations(root: ParentNode = document): void {
-  root.querySelectorAll<HTMLElement>('[data-i18n]').forEach(element => {
-    const key = element.dataset.i18n
-    if (key) element.textContent = t(key)
+  root.querySelectorAll<HTMLElement>('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n as string)
   })
 
-  root.querySelectorAll<HTMLElement>('[data-i18n-placeholder]').forEach(element => {
-    const key = element.dataset.i18nPlaceholder
-    if (key) element.setAttribute('placeholder', t(key))
+  root.querySelectorAll<HTMLElement>('[data-i18n-placeholder]').forEach(el => {
+    el.setAttribute('placeholder', t(el.dataset.i18nPlaceholder as string))
   })
 
   document.documentElement.lang = currentLanguage

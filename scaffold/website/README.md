@@ -1,7 +1,6 @@
 # Task Manager App
 
-A simple task management application, written in TypeScript and bundled with Vite. Tasks live
-in `localStorage`; the interface is available in English and French.
+A simple task management application, in English and French.
 
 ## Setup
 
@@ -18,77 +17,60 @@ npm run build
 
 ## Features
 
-- **Add, complete and delete tasks** — each task carries a priority (`low`, `medium`, `high`)
-  and a creation date. `src/taskManager.ts` owns the list and the rendering.
-- **Filter the list** — `All` / `Active` / `Completed`, driven by the `.filter-btn` buttons in
-  `index.html`.
-- **Live counters** — total and completed, kept in `#total-count` and `#completed-count`.
-- **English and French interface** — every string in `index.html` that the user reads carries a
-  `data-i18n` (or `data-i18n-placeholder`) attribute, and `applyTranslations()` in
-  `src/i18n.ts` rewrites them on boot and on every language switch. The same pass moves
-  `document.documentElement.lang`, so assistive technology follows the change, and
-  `document.title`, so the browser tab does too. Strings the renderer owns — the delete button,
-  the `FAIBLE`/`MOYENNE`/`ÉLEVÉE` priority chip, a pending storage notice — go through `t()` in
-  `src/taskManager.ts` and repaint with the rest. The catalogues are
-  `src/translations/en.json` and `src/translations/fr.json`; they must carry identical key sets
-  in identical order.
-- **Persistence that fails loudly** — `loadFromStorage()` validates every stored entry before
-  restoring it (id must be a safe positive integer, duplicates are dropped) and
-  `saveToStorage()` catches a rejected write. Either failure puts a visible `.app-notice` row
-  in the task list rather than leaving the page silently wrong.
-
-  **Exactly one thing on this page is allowed to stay in English**: the two language buttons,
-  because each is already written in the language it selects — translating them would show
-  "Anglais" to someone who reads only English. Everything else the user can see has a key.
-  `src/tests/noEnglishLeft.test.ts` enforces that: it renders the real page in French and fails
-  on any text node, `placeholder`, `title`, `aria-label` or `document.title` that is not a
-  French catalogue value, is not on that allow-list, and is not what the user typed.
+- Add tasks with a low / medium / high priority.
+- Mark a task complete, or delete it.
+- Filter the list by all / active / completed. Filtering never removes anything — the
+  counters keep reporting the full list.
+- Full English and French interface. The language buttons repaint both the static markup
+  and the parts the code builds (the priority badge and the Delete button), and they move
+  `<html lang>` and the document title with them.
+- Tasks persist in `localStorage` and are re-read on the next visit. That store is treated
+  as untrusted input: anyone can edit it from the browser console, so entries are validated
+  one by one and anything malformed is dropped instead of blanking the page.
+- Failures are shown on the page, in a banner, not only in the console. A storage write that
+  is refused, a saved list that cannot be read, or a start-up that fails all surface to the
+  user in the current language.
 
 ## Testing
 
-The suite runs on Vitest in a `jsdom` environment. All test files live in `src/tests/`.
+Vitest with jsdom. `jsdom` is required by `vitest.config.ts` — without it the suite cannot
+run at all, so there is no coverage number to read.
 
 ```bash
-npm run test           # run the suite once
-npm run test:coverage  # run it with the v8 coverage reporter
+npm run test           # 119 cases across 6 files
+npm run test:coverage  # same suite, plus the coverage gate
 ```
 
-**Coverage threshold: 80% of statements.** It is enforced by the runner, not by prose —
-`vitest.config.ts` declares `coverage.thresholds.statements = 80`, so `npm run test:coverage`
-exits non-zero below the line. `coverage.include` is `src/**/*.ts`, which also counts the
-shared DOM fixture `src/tests/fixture.ts`; that is deliberate, and it costs a few points.
+**Coverage is enforced by the runner, not by reading the table.** `vitest.config.ts` sets
+`thresholds: { statements: 80 }`, so `npm run test:coverage` exits non-zero when statement
+coverage falls under 80% even though every test passes. Current statement coverage is
+99.53%.
 
-The DOM fixture is read from `index.html` rather than retyped, so a change to the page that
-breaks the `data-i18n` wiring fails the suite instead of drifting silently.
+The other gates:
 
-**One test deserves its own paragraph.** Counting catalogue keys exits 0. Comparing `en.json`
-to `fr.json` exits 0. A suite of per-element assertions exits 0. All three can be green while
-an English heading sits on the French page, because they check a proxy — *are the keys there* —
-instead of the requirement, which is *is there any English left*.
-`src/tests/noEnglishLeft.test.ts` checks the requirement. It renders the page, switches to
-French, and walks every visible surface against an explicit allow-list. A new untagged string
-breaks the suite the day it is added, rather than waiting for someone to look at the screen.
+```bash
+npm run lint          # eslint, 0 errors
+npm run typecheck     # tsc --noEmit, 0 errors
+npm run format:check  # prettier, rewrites nothing
+npm run format        # prettier, applies the fixes
+```
+
+One test deserves naming: `src/tests/noEnglishLeft.test.ts` renders the page, switches to
+French, walks every text node plus `placeholder`, `title`, `aria-label` and
+`document.title`, and fails on any word-bearing string that is not a French catalogue value.
+Counting keys or comparing catalogues cannot catch an English heading that never had a key
+in the first place — this can.
 
 ## Contributing
 
-Every change must clear the same gates the CI does, in this order:
-
-| Gate | Command | Passes when |
-|---|---|---|
-| Tests | `npm run test` | exit code 0, zero failures |
-| Coverage | `npm run test:coverage` | statements ≥ 80% (enforced by the runner) |
-| Lint | `npm run lint` | zero errors (`eslint src --max-warnings 0`) |
-| Types | `npm run typecheck` | zero errors (`tsc --noEmit`) |
-| Formatting | `npm run format:check` | no file would be rewritten |
-
-`npm run format` applies the formatter. The repository is checked out with **CRLF** line
-endings, and `.prettierrc` sets `endOfLine: "crlf"` to match; `src/styles.css` and `index.html`
-are indented with four spaces and have a `tabWidth` override for that reason.
-
-Two further rules this project holds to:
-
-- **Never weaken a check to make it pass.** Do not lower the coverage threshold, delete a
-  failing test or add an ignore directive to silence the linter.
-- **Test files in `src/tests/` are written by a dedicated test author**, independently of
-  whoever changes the production code. A test that existed before a fix, and that the fixer
-  could not rewrite, is what proves the defect is gone.
+- Line endings are **CRLF**. Prettier is configured with `endOfLine: "crlf"`; leave it alone.
+  With the default (`lf`) a single format run rewrites every line of every file.
+- Style is enforced, not argued: run `npm run format` before pushing, and `npm run lint`,
+  `npm run typecheck` and `npm run test:coverage` must all exit 0.
+- **Translations come in pairs.** `en.json` and `fr.json` must hold the same keys in the same
+  order; the suite fails otherwise. Any string a user can read needs a key — including text
+  built in TypeScript, which `data-i18n` cannot reach.
+- A new element that carries a translated label needs a CSS rule as well. `.stats span` is
+  styled as a counter, so a label span dropped in beside one inherits the wrong style.
+- Never weaken a check to make it pass: no lowered threshold, no deleted test, no ignore
+  directive. If a test is genuinely wrong, say so rather than editing it into agreement.

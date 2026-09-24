@@ -50,6 +50,23 @@ h1 {
     color: #667eea;
 }
 
+/* Bannière d'erreur applicative : une panne doit se VOIR, pas seulement
+   atterrir dans la console. Sans règle propre, le texte s'afficherait sur
+   le fond blanc du conteneur, invisible en pratique. */
+.app-error {
+    margin: 1.5rem 2rem 0;
+    padding: 0.75rem 1rem;
+    background: #ffebee;
+    border: 2px solid #d32f2f;
+    border-radius: 6px;
+    color: #b71c1c;
+    font-weight: bold;
+}
+
+.app-error[hidden] {
+    display: none;
+}
+
 main {
     padding: 2rem;
 }
@@ -216,45 +233,18 @@ button[type='submit']:hover {
     color: #667eea;
 }
 
+/* Les libellés traduits sont passés dans leur propre <span> pour porter
+   data-i18n sans effacer le compteur voisin. La règle `.stats span`
+   ci-dessus les repeindrait comme des compteurs : on la neutralise. */
+.stats .stats-label,
+footer .footer-text {
+    font-weight: normal;
+    color: #666;
+}
+
 footer {
     background: #f9f9f9;
     padding: 1rem;
     text-align: center;
     color: #666;
-}
-
-/* The translatable label inside each stats line. Without this rule it would inherit
-   `.stats span`, which exists to make the COUNTER stand out, and the label would turn
-   bold and purple the moment it was wrapped for translation. */
-.stats .stats-label {
-    font-weight: normal;
-    color: #666;
-}
-
-/* The translatable half of the footer line, wrapped so the year beside it survives a
-   language switch. Stated explicitly so it cannot be captured by a future `footer span`. */
-footer .footer-text {
-    color: inherit;
-    font-weight: normal;
-}
-
-/* Storage and boot failures are shown here. `#tasks` sets `list-style: none`, so without
-   these rules a notice appended to the list renders as bare text with no bullet, no
-   background and no padding — indistinguishable from empty space. */
-.app-notice {
-    background: #fff3e0;
-    border-left: 4px solid #f57c00;
-    border-radius: 6px;
-    color: #8a4b00;
-    font-size: 0.9rem;
-    list-style: none;
-    margin-bottom: 0.5rem;
-    padding: 0.75rem 1rem;
-    text-align: left;
-}
-
-.app-notice--error {
-    background: #ffebee;
-    border-left-color: #d32f2f;
-    color: #b71c1c;
 }

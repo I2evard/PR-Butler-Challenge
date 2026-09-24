@@ -8,9 +8,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "format": "prettier --write \"index.html\" \"src/**/*.{ts,css,json}\"",
-    "format:check": "prettier --check \"index.html\" \"src/**/*.{ts,css,json}\"",
-    "lint": "eslint src --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

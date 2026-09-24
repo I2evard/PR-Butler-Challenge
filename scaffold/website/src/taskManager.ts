@@ -1,38 +1,46 @@
-import { t } from './i18n'
 import { Task, TaskFilter } from './types'
+import { t } from './i18n'
+import { showError } from './ui'
 
-/** The `localStorage` key the task list is persisted under. */
+/** Clé sous laquelle la liste est conservée dans localStorage. */
 const STORAGE_KEY = 'tasks'
 
-/** The three priorities a stored entry is allowed to declare. */
-const PRIORITIES: readonly string[] = ['low', 'medium', 'high']
+/** Les seules priorités acceptées à la relecture du stockage. */
+const PRIORITIES: readonly Task['priority'][] = ['low', 'medium', 'high']
 
+/**
+ * La liste de tâches et son rendu.
+ *
+ * Elle est sa propre source de vérité : le DOM est reconstruit à partir d'elle à
+ * chaque changement, jamais lu pour savoir ce qui existe. Le stockage local n'est
+ * qu'un miroir, et il est traité comme une entrée hostile — n'importe qui peut
+ * l'éditer depuis la console du navigateur.
+ */
 export class TaskManager {
   private tasks: Task[] = []
   private filter: TaskFilter = 'all'
   private nextId = 1
 
   /**
-   * Catalogue key of the storage problem the user still needs to see, or `null` when storage
-   * is healthy. A key rather than a sentence, so that switching language repaints the notice
-   * in the new one.
+   * Construit le gestionnaire et relit immédiatement le stockage local.
+   *
+   * Une relecture qui échoue ne fait pas échouer la construction : l'objet reste
+   * utilisable avec une liste vide, et l'utilisateur en est averti.
    */
-  private storageNoticeKey: string | null = null
-
   constructor() {
     this.loadFromStorage()
   }
 
   /**
-   * Records a new task at the end of the list, persists it and repaints.
+   * Inscrit une nouvelle tâche, la persiste et redessine la liste.
    *
-   * The task is kept in memory even when the write is refused; the notice raised by
-   * {@link saveToStorage} is what tells the user the two no longer agree.
+   * Le texte est pris tel quel : c'est le rendu qui garantit qu'il ne sera jamais
+   * interprété comme du balisage.
    *
-   * @param text - the description the user typed, stored and displayed verbatim.
-   * @param priority - how urgent the task is; drives the colour of its badge.
+   * @param text Texte saisi par l'utilisateur.
+   * @param priority Priorité choisie dans la liste déroulante.
    */
-  addTask(text: string, priority: 'low' | 'medium' | 'high'): void {
+  addTask(text: string, priority: 'low' | 'medium' | 'high') {
     const task: Task = {
       id: this.allocateId(),
       text,
@@ -46,15 +54,15 @@ export class TaskManager {
   }
 
   /**
-   * Flips a task between done and not done.
+   * Bascule une tâche entre « à faire » et « terminée ».
    *
-   * An id that matches nothing is ignored rather than treated as an error: the id may name a
-   * task another tab has already deleted.
+   * Un identifiant inconnu ne fait rien et ne lève pas : le rendu précédent a pu
+   * être construit avant une suppression venue d'un autre onglet.
    *
-   * @param id - the id of the task to flip.
+   * @param id Identifiant de la tâche visée.
    */
-  toggleTask(id: number): void {
-    const task = this.tasks.find(candidate => candidate.id === id)
+  toggleTask(id: number) {
+    const task = this.tasks.find(t => t.id === id)
     if (task) {
       task.completed = !task.completed
       this.saveToStorage()
@@ -63,57 +71,52 @@ export class TaskManager {
   }
 
   /**
-   * Drops a task from the list for good.
+   * Retire définitivement une tâche, persiste et redessine.
    *
-   * This is the destructive path that makes id validation matter: it removes *every* task
-   * carrying the id, so two tasks sharing one would disappear together. Duplicates are
-   * therefore rejected on restore, before they can ever reach this method.
-   *
-   * @param id - the id of the task to remove.
+   * @param id Identifiant de la tâche à retirer ; un identifiant absent est sans effet.
    */
-  deleteTask(id: number): void {
-    this.tasks = this.tasks.filter(task => task.id !== id)
+  deleteTask(id: number) {
+    this.tasks = this.tasks.filter(t => t.id !== id)
     this.saveToStorage()
     this.render()
   }
 
   /**
-   * Chooses which slice of the list is shown, and repaints.
+   * Change le sous-ensemble affiché sans rien supprimer.
    *
-   * @param filter - `'all'`, `'active'` (not yet done) or `'completed'`.
+   * Le filtre ne touche que l'affichage : `getTasks()` reste complet, ce qui évite
+   * qu'une sauvegarde déclenchée pendant un filtrage n'écrive une liste amputée.
+   *
+   * @param filter `all`, `active` ou `completed`.
    */
-  setFilter(filter: TaskFilter): void {
+  setFilter(filter: TaskFilter) {
     this.filter = filter
     this.render()
   }
 
   /**
-   * Repaints the task list and the two counters from the current state.
+   * Reconstruit la liste affichée à partir de l'état courant.
    *
-   * Returns without touching anything when the page has no `#tasks` element — the manager is
-   * usable outside the full page, and a missing list is not an error.
+   * Le contenu précédent est jeté plutôt que rapiécé : c'est ce qui fait qu'un
+   * changement de langue repeint aussi les libellés construits en code.
+   *
+   * Ne fait rien si la page ne porte pas de liste — le module est importé par des
+   * tests et par des pages partielles.
    */
-  render(): void {
+  render() {
     const taskList = document.getElementById('tasks')
     if (!taskList) return
 
     taskList.innerHTML = ''
-
-    if (this.storageNoticeKey) {
-      taskList.appendChild(this.buildNoticeRow(t(this.storageNoticeKey)))
-    }
-
-    for (const task of this.filterTasks()) {
-      taskList.appendChild(this.buildTaskRow(task))
-    }
+    this.filterTasks().forEach(task => taskList.appendChild(this.buildTaskRow(task)))
 
     this.updateStats()
   }
 
   /**
-   * Applies the active filter to the list.
+   * Applique le filtre courant sans toucher à la liste réelle.
    *
-   * @returns the tasks the current filter lets through, in insertion order.
+   * @returns Les tâches à afficher, dans l'ordre d'ajout.
    */
   private filterTasks(): Task[] {
     if (this.filter === 'active') return this.tasks.filter(task => !task.completed)
@@ -122,10 +125,10 @@ export class TaskManager {
   }
 
   /**
-   * Builds the row for one task, listeners included.
+   * Fabrique la ligne d'une tâche, écouteurs compris.
    *
-   * @param task - the task to draw.
-   * @returns a detached `<li>` ready to be appended to the list.
+   * @param task La tâche à représenter.
+   * @returns L'élément `<li>` prêt à être inséré.
    */
   private buildTaskRow(task: Task): HTMLLIElement {
     const li = document.createElement('li')
@@ -142,14 +145,11 @@ export class TaskManager {
 
     const text = document.createElement('span')
     text.className = 'task-text'
-    // textContent, never innerHTML: the task text is user input and must never be parsed
-    // as markup.
+    // textContent et jamais innerHTML : le texte vient de l'utilisateur.
     text.textContent = task.text
 
     const badge = document.createElement('span')
-    // The class keeps the raw priority — it drives the colour and must not move with the
-    // language. The label is a catalogue string: `badge.*` is the short chip, distinct from
-    // `priority.*`, which holds the longer `<select>` wording ("Low Priority").
+    // La priorité BRUTE reste dans la classe : le style ne doit pas dépendre de la langue.
     badge.className = `priority-badge priority-${task.priority}`
     badge.textContent = t(`badge.${task.priority}`)
 
@@ -168,182 +168,153 @@ export class TaskManager {
   }
 
   /**
-   * Builds the row that carries a storage problem to the user.
+   * Met les deux compteurs de la page à jour.
    *
-   * It is a list item so it can sit at the top of the task list, where the user is already
-   * looking; `styles.css` gives `.app-notice` the background and padding that make it read as
-   * a message rather than as stray text in a bulletless list.
-   *
-   * @param message - the already-translated sentence to show.
-   * @returns a detached `<li>` ready to be appended to the list.
+   * Compte sur la liste COMPLÈTE et non sur le sous-ensemble affiché : un total qui
+   * changerait en cliquant un filtre ferait croire à une perte de tâches.
    */
-  private buildNoticeRow(message: string): HTMLLIElement {
-    const notice = document.createElement('li')
-    notice.className = 'app-notice app-notice--error'
-    notice.setAttribute('role', 'alert')
-    notice.textContent = message
-    return notice
-  }
-
-  /** Writes the total and completed counts into the two `<span>` counters on the page. */
-  private updateStats(): void {
+  private updateStats() {
     const totalCount = document.getElementById('total-count')
     const completedCount = document.getElementById('completed-count')
 
     if (totalCount) totalCount.textContent = String(this.tasks.length)
     if (completedCount) {
-      completedCount.textContent = String(this.tasks.filter(task => task.completed).length)
+      completedCount.textContent = String(this.tasks.filter(t => t.completed).length)
     }
   }
 
   /**
-   * Hands out an id that no task currently holds.
+   * Réserve un identifiant qu'aucune tâche en place n'utilise.
    *
-   * Deliberately not `Math.max(...ids) + 1`: a stored `Number.MAX_SAFE_INTEGER` passes every
-   * validation, and `max + 1` then leaves the safe range, after which the counter stops
-   * incrementing and every later task receives the same id. Allocating against the ids in use,
-   * and wrapping back to 1 at the edge, has no such saturation point.
-   *
-   * @returns a safe positive integer that is free right now.
+   * `max + 1` ne convient pas : arrivé à `Number.MAX_SAFE_INTEGER`, l'incrément
+   * SATURE et rend deux fois le même nombre, donc deux tâches partagent un
+   * identifiant et supprimer l'une supprime l'autre. On cherche donc un trou réel,
+   * en repartant du début si le haut de la plage est atteint.
    */
   private allocateId(): number {
     const used = new Set(this.tasks.map(task => task.id))
-    let candidate = Number.isSafeInteger(this.nextId) && this.nextId > 0 ? this.nextId : 1
-    while (used.has(candidate)) {
-      candidate = Number.isSafeInteger(candidate + 1) ? candidate + 1 : 1
+
+    let candidate = this.nextId
+    while (candidate <= Number.MAX_SAFE_INTEGER && used.has(candidate)) candidate++
+
+    if (candidate > Number.MAX_SAFE_INTEGER) {
+      candidate = 1
+      while (candidate <= Number.MAX_SAFE_INTEGER && used.has(candidate)) candidate++
     }
-    this.nextId = Number.isSafeInteger(candidate + 1) ? candidate + 1 : 1
+
+    this.nextId = candidate < Number.MAX_SAFE_INTEGER ? candidate + 1 : 1
     return candidate
   }
 
   /**
-   * Persists the list, and raises a visible notice if the browser refuses the write.
+   * Écrit la liste dans le stockage local.
    *
-   * `localStorage.setItem` throws on a full quota and in Safari's private mode. Left
-   * unguarded it escapes between the push and the repaint, so the task sits in memory, the
-   * page never updates and storage stays empty — three states disagreeing with nothing said.
-   * A successful write clears the notice, because a notice that cannot clear teaches the user
-   * to ignore it.
-   *
-   * @returns `true` when the list reached storage.
+   * N'échoue jamais bruyamment : un quota dépassé ou un mode privé ne doit pas
+   * interrompre l'action en cours, mais ne doit pas non plus passer inaperçu.
    */
-  private saveToStorage(): boolean {
+  private saveToStorage() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(this.tasks))
-      this.storageNoticeKey = null
-      return true
     } catch {
-      this.storageNoticeKey = 'error.storage.write'
-      return false
+      // Quota dépassé, mode privé, stockage désactivé : la page a l'air normale et
+      // ne retient plus rien. Le silence ferait perdre des tâches sans le dire.
+      showError('error.save')
     }
   }
 
   /**
-   * Restores the list from storage, discarding anything that is not a valid task.
+   * Relit la liste depuis le stockage local en la traitant comme une entrée hostile.
    *
-   * Never throws: unreadable JSON, a payload that is not an array, an entry that fails
-   * validation and an entry whose id is already taken are all dropped, and any drop raises the
-   * notice {@link render} paints above the rows.
+   * N'importe qui peut éditer `localStorage` depuis la console : le contenu est donc
+   * analysé sous garde, validé entrée par entrée, et tout ce qui ne tient pas est
+   * écarté plutôt que de faire tomber la page sur un écran blanc.
    */
-  // TODO: migrate to API backend
-  private loadFromStorage(): void {
-    let stored: string | null
-    try {
-      stored = localStorage.getItem(STORAGE_KEY)
-    } catch {
-      this.storageNoticeKey = 'error.storage.read'
-      return
-    }
+  private loadFromStorage() {
+    // TODO: migrate to API backend
+    const stored = localStorage.getItem(STORAGE_KEY)
     if (!stored) return
 
     let parsed: unknown
     try {
       parsed = JSON.parse(stored)
     } catch {
-      this.storageNoticeKey = 'error.storage.read'
+      this.discardStorage()
       return
     }
+
     if (!Array.isArray(parsed)) {
-      this.storageNoticeKey = 'error.storage.read'
+      this.discardStorage()
       return
     }
 
-    const restored: Task[] = []
     const seen = new Set<number>()
-    let discarded = false
-
-    for (const candidate of parsed) {
-      const task = TaskManager.parseStoredTask(candidate)
-      if (!task || seen.has(task.id)) {
-        discarded = true
-        continue
-      }
+    const kept: Task[] = []
+    for (const entry of parsed) {
+      const task = this.toTask(entry)
+      if (!task || seen.has(task.id)) continue
       seen.add(task.id)
-      restored.push(task)
+      kept.push(task)
     }
 
-    this.tasks = restored
-    this.nextId = 1
-    if (discarded) this.storageNoticeKey = 'error.storage.read'
+    this.tasks = kept
+    if (kept.length !== parsed.length) this.reportDiscarded()
+
+    const maxId = kept.reduce((highest, task) => Math.max(highest, task.id), 0)
+    this.nextId = maxId < Number.MAX_SAFE_INTEGER ? maxId + 1 : 1
   }
 
   /**
-   * Turns one stored entry into a task, or rejects it.
+   * Valide une entrée relue du stockage et la convertit en tâche.
    *
-   * Every field the `Task` interface declares is checked, `createdAt` included: JSON turns a
-   * `Date` into a string on the way out, so a guard written `value is Task` that skipped it
-   * would hand the compiler a type it does not have. This returns a freshly built task
-   * instead, with `createdAt` rebuilt as a real `Date`.
-   *
-   * `id` gets the strictest check because it is the key every destructive action is routed
-   * through: it must be a safe positive integer.
-   *
-   * @param value - anything that came back out of storage.
-   * @returns the task, or `null` when the entry cannot be trusted.
+   * @returns La tâche, ou `null` si l'entrée est inexploitable.
    */
-  private static parseStoredTask(value: unknown): Task | null {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
-    const raw = value as Record<string, unknown>
+  private toTask(entry: unknown): Task | null {
+    if (typeof entry !== 'object' || entry === null) return null
+    const raw = entry as Record<string, unknown>
 
-    const id = raw.id
-    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null
+    // Un identifiant doit être un entier sûr et strictement positif : au-delà,
+    // l'arithmétique de JavaScript ne distingue plus deux valeurs voisines.
+    if (!Number.isSafeInteger(raw.id) || (raw.id as number) <= 0) return null
+    if (typeof raw.text !== 'string') return null
+    if (typeof raw.priority !== 'string') return null
+    if (!PRIORITIES.includes(raw.priority as Task['priority'])) return null
+    if (typeof raw.completed !== 'boolean') return null
 
-    const text = raw.text
-    if (typeof text !== 'string') return null
+    const createdAt = new Date(raw.createdAt as string)
 
-    const priority = raw.priority
-    if (typeof priority !== 'string' || !PRIORITIES.includes(priority)) return null
+    return {
+      id: raw.id as number,
+      text: raw.text,
+      priority: raw.priority as Task['priority'],
+      completed: raw.completed,
+      createdAt: Number.isNaN(createdAt.getTime()) ? new Date() : createdAt
+    }
+  }
 
-    const completed = raw.completed
-    if (typeof completed !== 'boolean') return null
+  /** Abandonne un contenu de stockage inexploitable et repart d'une liste vide. */
+  private discardStorage() {
+    this.tasks = []
+    this.reportDiscarded()
+  }
 
-    const rawDate = raw.createdAt
-    const createdAt =
-      rawDate instanceof Date
-        ? rawDate
-        : typeof rawDate === 'string' || typeof rawDate === 'number'
-          ? new Date(rawDate)
-          : null
-    if (!createdAt || Number.isNaN(createdAt.getTime())) return null
-
-    return { id, text, priority: priority as Task['priority'], completed, createdAt }
+  /** Signale à l'utilisateur que des tâches enregistrées ont été écartées. */
+  private reportDiscarded() {
+    showError('error.load')
   }
 
   /**
-   * Exposes the list itself, unfiltered and in insertion order.
+   * Rend la liste complète, filtre courant ignoré.
    *
-   * @returns the live array of tasks.
+   * @returns Le tableau interne lui-même — les appelants ne doivent pas le muter.
    */
-  getTasks(): Task[] {
+  getTasks() {
     return this.tasks
   }
 
   /**
-   * Counts the tasks already ticked off, whatever filter is showing.
-   *
-   * @returns how many tasks are completed.
+   * Compte les tâches terminées, filtre courant ignoré.
    */
-  getCompletedCount(): number {
-    return this.tasks.filter(task => task.completed).length
+  getCompletedCount() {
+    return this.tasks.filter(t => t.completed).length
   }
 }

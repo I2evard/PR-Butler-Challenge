@@ -1,21 +1,20 @@
 import { TaskManager } from './taskManager'
-import { applyTranslations, loadTranslations, setLanguage, t } from './i18n'
+import { loadTranslations, setLanguage, applyTranslations } from './i18n'
+import { showError } from './ui'
 import { TaskFilter } from './types'
 import './styles.css'
 
-/** The one task list the page works on. Left undefined when the boot sequence failed. */
-let taskManager: TaskManager | undefined
+let taskManager: TaskManager
 
 /**
- * Brings the page to life: loads the catalogues, translates the static markup, restores the
- * saved tasks, wires the controls and paints the first frame.
+ * Démarre l'application : catalogues, première traduction de la page, liste de
+ * tâches relue du stockage, câblage des commandes, premier rendu.
  *
- * The translation pass runs before the list is built so the page is never shown in a mix of
- * two languages.
- *
- * @returns a promise that rejects if any of those steps fails, so the caller can tell the user.
+ * L'ordre n'est pas décoratif. Les traductions sont appliquées avant que le
+ * gestionnaire ne soit construit, pour qu'une erreur de relecture du stockage
+ * s'affiche déjà dans la bonne langue.
  */
-async function init(): Promise<void> {
+async function init() {
   await loadTranslations()
   applyTranslations()
   taskManager = new TaskManager()
@@ -24,13 +23,13 @@ async function init(): Promise<void> {
 }
 
 /**
- * Subscribes the page's controls to the task list: the add form, the two language buttons and
- * the three filter buttons.
+ * Branche les commandes de la page sur le gestionnaire : soumission du formulaire,
+ * choix de la langue, boutons de filtre.
  *
- * Called once, from {@link init}; the per-task checkbox and delete listeners are attached by
- * the renderer instead, because those elements are rebuilt on every repaint.
+ * Appelée une seule fois au démarrage ; les lignes de tâches, elles, rebranchent
+ * leurs propres écouteurs à chaque rendu puisqu'elles sont recréées.
  */
-function setupEventListeners(): void {
+function setupEventListeners() {
   const form = document.getElementById('task-form') as HTMLFormElement
   const langEnBtn = document.getElementById('lang-en')
   const langFrBtn = document.getElementById('lang-fr')
@@ -47,38 +46,41 @@ function setupEventListeners(): void {
       if (filter) {
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'))
         target.classList.add('active')
-        taskManager?.setFilter(filter as TaskFilter)
+        taskManager.setFilter(filter as TaskFilter)
       }
     })
   })
 }
 
 /**
- * Turns a form submission into a new task and clears the field.
+ * Transforme une soumission du formulaire en nouvelle tâche.
  *
- * A description of nothing but whitespace is dropped silently: the field is `required`, so the
- * browser has already asked once, and a second complaint would add noise, not information.
+ * Empêche le rechargement de page, ignore une saisie vide ou faite d'espaces, et
+ * vide le champ pour que la saisie suivante parte de zéro.
  *
- * @param e - the form's submit event; its default navigation is cancelled.
+ * @param e L'événement `submit` du formulaire.
  */
-function handleSubmit(e: Event): void {
+function handleSubmit(e: Event) {
   e.preventDefault()
   const input = document.getElementById('task-input') as HTMLInputElement
   const select = document.getElementById('priority-select') as HTMLSelectElement
   if (input.value.trim()) {
-    taskManager?.addTask(input.value, select.value as 'low' | 'medium' | 'high')
+    taskManager.addTask(input.value, select.value as 'low' | 'medium' | 'high')
     input.value = ''
   }
 }
 
 /**
- * Switches the interface to another language: marks the chosen button, rewrites every
- * catalogue-driven string on the page, then repaints the task list so the strings the renderer
- * owns — the delete buttons, a pending storage notice — follow too.
+ * Bascule toute l'interface dans une autre langue.
  *
- * @param lang - the language code to switch to, `'en'` or `'fr'`.
+ * Déplacer la classe `active` ne suffisait pas : la page restait en anglais. Il faut
+ * REPEINDRE le balisage statique (`applyTranslations`) ET REJOUER le rendu, parce
+ * que le badge de priorité et le bouton de suppression sont construits en code et
+ * qu'aucun `data-i18n` ne les atteint.
+ *
+ * @param lang Code de la langue à activer (`en` ou `fr`).
  */
-function switchLanguage(lang: string): void {
+function switchLanguage(lang: string) {
   setLanguage(lang)
 
   document.querySelectorAll('.language-selector button').forEach(btn => {
@@ -89,32 +91,12 @@ function switchLanguage(lang: string): void {
   activeBtn?.classList.add('active')
 
   applyTranslations()
-  taskManager?.render()
-}
-
-/**
- * Puts a boot failure where the user is already looking.
- *
- * A `.catch` that only logged would turn a loud failure into a silent one: the static markup
- * still paints, no control is wired, and the page looks normal while every click does nothing.
- * The notice goes into the task list when there is one, and into the top of the body when the
- * page is so broken that there is not.
- *
- * @param message - the already-translated sentence to show.
- */
-function showBootFailure(message: string): void {
-  const list = document.getElementById('tasks')
-  const host = list ?? document.body
-  if (!host) return
-
-  const notice = document.createElement(list ? 'li' : 'p')
-  notice.className = 'app-notice app-notice--error'
-  notice.setAttribute('role', 'alert')
-  notice.textContent = message
-  host.prepend(notice)
+  taskManager.render()
 }
 
 init().catch(error => {
-  console.error('Task Manager failed to start', error)
-  showBootFailure(t('error.boot'))
+  // La console seule ne suffit pas : un démarrage manqué laisse une page muette
+  // que l'utilisateur croit simplement vide. Le détail reste pour le diagnostic.
+  console.error('init failed', error)
+  showError('error.init')
 })
