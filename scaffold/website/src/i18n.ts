@@ -9,78 +9,76 @@ const translations: Translations = {
 }
 
 /**
- * Makes the catalogues usable by `t()`.
+ * Makes the catalogues available to {@link t}.
  *
- * The catalogues are bundled at build time, so there is nothing to fetch; the function
- * stays asynchronous so that moving them behind a network call later does not change
- * a single call site.
+ * Both files are bundled statically, so there is nothing to fetch. The function stays
+ * asynchronous so that moving the catalogues behind a network call later would not change a
+ * single call site.
  *
- * @returns a promise that settles once the catalogues are ready to be read
+ * @returns a promise that settles once the catalogues can be read.
  */
-export async function loadTranslations() {
-  // Translations are imported statically
+export async function loadTranslations(): Promise<void> {
   return Promise.resolve()
 }
 
 /**
- * Chooses the catalogue that `t()` reads from.
+ * Chooses which catalogue {@link t} reads from.
  *
- * Changing the language does not repaint anything on its own — call
- * {@link applyTranslations} afterwards to push the new wording into the page.
+ * An unrecognised code is accepted rather than replaced by a fallback: `t()` then returns each
+ * key unchanged, which puts a bad language code on screen instead of hiding it behind English.
  *
- * @param lang two-letter code of the catalogue to use; an unknown code makes `t()`
- *   fall back to returning keys
+ * @param lang - the language code to activate, for instance `'en'` or `'fr'`.
  */
-export function setLanguage(lang: string) {
+export function setLanguage(lang: string): void {
   currentLanguage = lang
 }
 
 /**
- * Looks a wording up in the active catalogue.
+ * Resolves one user-facing string in the active catalogue.
  *
- * @param key catalogue key, e.g. `button.delete`
- * @returns the translated wording, or the key itself when the catalogue has no entry
- *   for it — a visible `button.delete` on screen is the signal that a key is missing
+ * @param key - the catalogue key, for instance `'button.delete'`.
+ * @returns the translated string, or the key itself when either the key or the language is
+ *          unknown — never an empty string, so a gap in the catalogue stays visible.
  */
 export function t(key: string): string {
   return translations[currentLanguage]?.[key] || key
 }
 
 /**
- * Reports which catalogue is currently in force.
+ * Reports which catalogue {@link t} is reading from.
  *
- * @returns the two-letter code last given to {@link setLanguage}
+ * @returns the active language code.
  */
-export function getCurrentLanguage() {
+export function getCurrentLanguage(): string {
   return currentLanguage
 }
 
 /**
- * Pushes the active catalogue into the markup.
+ * Pushes the active catalogue into the page.
  *
- * Every element carrying `data-i18n="<key>"` has its text replaced, and every element
- * carrying `data-i18n-placeholder="<key>"` has its placeholder replaced. Those two
- * attributes are the only contract between the page and the catalogues: an element
- * without one keeps whatever the markup gave it.
+ * Rewrites the `textContent` of every `[data-i18n]` element and the `placeholder` of every
+ * `[data-i18n-placeholder]` element found under `root`.
  *
- * Because the text is written with `textContent`, only an element whose text is the
- * *whole* of its content may carry `data-i18n` — a label sitting beside a counter or a
- * date must be wrapped in its own element first, or the sibling is wiped.
+ * It then touches two things `root` does not scope, deliberately: `document.documentElement.lang`
+ * and `document.title`. Both are global by nature and neither can be reached through
+ * `textContent`, yet both are visible — the first to a screen reader, which otherwise pronounces
+ * French with an English voice, and the second in the browser tab. Scoping them to the subtree
+ * would mean a caller who translates one panel leaves the tab reading the old language, so they
+ * happen on every pass regardless of `root`.
  *
- * @param root subtree to translate; defaults to the whole document
+ * @param root - the subtree whose elements are translated; defaults to the whole document.
  */
 export function applyTranslations(root: ParentNode = document): void {
-  root.querySelectorAll('[data-i18n]').forEach(element => {
-    const key = element.getAttribute('data-i18n')
-    if (key) {
-      element.textContent = t(key)
-    }
+  root.querySelectorAll<HTMLElement>('[data-i18n]').forEach(element => {
+    const key = element.dataset.i18n
+    if (key) element.textContent = t(key)
   })
 
-  root.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
-    const key = element.getAttribute('data-i18n-placeholder')
-    if (key) {
-      element.setAttribute('placeholder', t(key))
-    }
+  root.querySelectorAll<HTMLElement>('[data-i18n-placeholder]').forEach(element => {
+    const key = element.dataset.i18nPlaceholder
+    if (key) element.setAttribute('placeholder', t(key))
   })
+
+  document.documentElement.lang = currentLanguage
+  document.title = t('page.title')
 }

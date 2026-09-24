@@ -12,5 +12,13 @@
   "stats.total": "Total des tâches",
   "stats.completed": "Terminées",
   "button.delete": "Supprimer",
-  "footer.text": "Conçu avec TypeScript"
+  "footer.text": "Conçu avec TypeScript",
+  "page.title": "Gestionnaire de tâches",
+  "task.list": "Vos tâches",
+  "badge.low": "FAIBLE",
+  "badge.medium": "MOYENNE",
+  "badge.high": "ÉLEVÉE",
+  "error.storage.read": "Les tâches enregistrées n'ont pas pu être lues; elles ont été écartées.",
+  "error.storage.write": "Cette tâche n'a pas pu être enregistrée; elle sera perdue au rechargement.",
+  "error.boot": "L'application n'a pas pu démarrer. Veuillez recharger la page."
 }

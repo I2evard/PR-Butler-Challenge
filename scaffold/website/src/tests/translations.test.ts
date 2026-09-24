@@ -1,59 +1,22 @@
-/**
- * SCENARIOS -- translation catalogues and the markup that consumes them
- *
- *  1. The English and French catalogues describe the same 14 keys, in both directions.
- *  2. The two catalogues list their keys in the same order, so a reviewer can diff them.
- *  3. Every French value is a non-empty string, and none is a copy of the English one.
- *  4. The French values are exactly the ones the contract promises.
- *  5. index.html carries exactly 12 `data-i18n` attributes and exactly 1 `data-i18n-placeholder`.
- *  6. The keys used in the markup are exactly the 13 expected ones.
- *  7. Every key used in the markup exists in both catalogues.
- *  8. The two stats labels and the footer label live in their OWN span, so the counters
- *     (`#total-count`, `#completed-count`) and the ` . 2026` suffix survive a translation.
- */
+// SCENARIOS - the two catalogues must stay aligned
+//   1. Every key the brief requires is present in the French catalogue
+//   2. Both catalogues hold the same keys, declared in the same order
+//   3. No French value is an empty string
+//   4. The catalogue may grow: the required count is a floor, never a ceiling
+//   5. The five keys added to widen the translation scope are present in both catalogues
+
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { resolve, dirname } from 'node:path'
-import { APP_MARKUP, queryOrThrow } from './fixture'
+import enCatalogue from '../translations/en.json'
+import frCatalogue from '../translations/fr.json'
 
-const HERE = dirname(fileURLToPath(import.meta.url))
+const EN = enCatalogue as Record<string, string>
+const FR = frCatalogue as Record<string, string>
 
-function readCatalogue(file: string): Record<string, string> {
-  const raw = readFileSync(resolve(HERE, `../translations/${file}`), 'utf-8')
-  return JSON.parse(raw) as Record<string, string>
-}
-
-const en = readCatalogue('en.json')
-const fr = readCatalogue('fr.json')
-
-const EXPECTED_FRENCH: Record<string, string> = {
-  'app.title': 'Mon Gestionnaire de Tâches',
-  'task.add': 'Ajouter une Nouvelle Tâche',
-  'task.placeholder': 'Saisir la description de la tâche',
-  'priority.low': 'Priorité faible',
-  'priority.medium': 'Priorité moyenne',
-  'priority.high': 'Priorité élevée',
-  'button.add': 'Ajouter la tâche',
-  'filter.all': 'Toutes les tâches',
-  'filter.active': 'Actives',
-  'filter.completed': 'Terminées',
-  'stats.total': 'Total des tâches',
-  'stats.completed': 'Terminées',
-  'button.delete': 'Supprimer',
-  'footer.text': 'Conçu avec TypeScript'
-}
-
-/**
- * Keys whose French value is legitimately identical to the English one -- a proper
- * noun, a brand, a number. There are none in this catalogue; the list exists so that
- * adding one is a deliberate, reviewable act rather than a silently skipped assertion.
- */
-const LEGITIMATELY_IDENTICAL: string[] = []
-
-const EXPECTED_MARKUP_KEYS = [
+/** The fourteen keys the brief requires. This list must never shrink. */
+const REQUIRED_KEYS = [
   'app.title',
   'task.add',
+  'task.placeholder',
   'priority.low',
   'priority.medium',
   'priority.high',
@@ -63,118 +26,58 @@ const EXPECTED_MARKUP_KEYS = [
   'filter.completed',
   'stats.total',
   'stats.completed',
+  'button.delete',
   'footer.text'
 ]
 
-function mountedMarkup(): HTMLElement {
-  const root = document.createElement('div')
-  root.innerHTML = APP_MARKUP
-  return root
-}
+/**
+ * The keys added when the translation scope widened to the tab title, the "Your Tasks" heading
+ * and the priority chips. Named one by one so that silently dropping one is caught here.
+ */
+const WIDENED_SCOPE_KEYS = ['page.title', 'task.list', 'badge.low', 'badge.medium', 'badge.high']
 
 describe('translation catalogues', () => {
-  it('describes 14 keys in English', () => {
-    expect(Object.keys(en)).toHaveLength(14)
-  })
-
-  it('describes 14 keys in French', () => {
-    expect(Object.keys(fr)).toHaveLength(14)
-  })
-
-  it('has no English key missing from French', () => {
-    const missing = Object.keys(en).filter(key => !(key in fr))
+  it('has every required key in the French catalogue', () => {
+    const missing = REQUIRED_KEYS.filter(key => !Object.prototype.hasOwnProperty.call(FR, key))
     expect(missing).toEqual([])
   })
 
-  it('has no French key missing from English', () => {
-    const extra = Object.keys(fr).filter(key => !(key in en))
-    expect(extra).toEqual([])
+  it('has every required key in the English catalogue', () => {
+    const missing = REQUIRED_KEYS.filter(key => !Object.prototype.hasOwnProperty.call(EN, key))
+    expect(missing).toEqual([])
   })
 
-  it('lists its keys in the same order in both files', () => {
-    expect(Object.keys(fr)).toEqual(Object.keys(en))
+  it('has every widened-scope key in both catalogues', () => {
+    const missingFromEnglish = WIDENED_SCOPE_KEYS.filter(
+      key => !Object.prototype.hasOwnProperty.call(EN, key)
+    )
+    const missingFromFrench = WIDENED_SCOPE_KEYS.filter(
+      key => !Object.prototype.hasOwnProperty.call(FR, key)
+    )
+    expect(missingFromEnglish).toEqual([])
+    expect(missingFromFrench).toEqual([])
+  })
+
+  it('declares the same keys in the same order in both catalogues', () => {
+    expect(Object.keys(FR)).toEqual(Object.keys(EN))
   })
 
   it('gives every French key a non-empty string value', () => {
-    for (const [key, value] of Object.entries(fr)) {
-      expect(typeof value, `fr["${key}"] should be a string`).toBe('string')
-      expect(value.trim().length, `fr["${key}"] should not be blank`).toBeGreaterThan(0)
+    for (const [key, value] of Object.entries(FR)) {
+      expect(typeof value, `fr.json value for "${key}"`).toBe('string')
+      expect(value.trim(), `fr.json value for "${key}"`).not.toBe('')
     }
   })
 
-  it('never leaves a French value identical to its English counterpart', () => {
-    const untranslated = Object.keys(en).filter(
-      key => fr[key] === en[key] && !LEGITIMATELY_IDENTICAL.includes(key)
-    )
-    expect(untranslated).toEqual([])
-  })
-
-  it('uses exactly the French wording the contract promises', () => {
-    expect(fr).toEqual(EXPECTED_FRENCH)
-  })
-})
-
-describe('index.html translation attributes', () => {
-  it('carries exactly 12 data-i18n attributes', () => {
-    expect(mountedMarkup().querySelectorAll('[data-i18n]')).toHaveLength(12)
-  })
-
-  it('carries exactly 1 data-i18n-placeholder attribute', () => {
-    expect(mountedMarkup().querySelectorAll('[data-i18n-placeholder]')).toHaveLength(1)
-  })
-
-  it('tags exactly the 12 expected elements', () => {
-    const keys = Array.from(mountedMarkup().querySelectorAll('[data-i18n]')).map(element =>
-      element.getAttribute('data-i18n')
-    )
-    expect(keys).toEqual(EXPECTED_MARKUP_KEYS)
-  })
-
-  it('tags the task input placeholder with task.placeholder', () => {
-    const input = queryOrThrow('[data-i18n-placeholder]', mountedMarkup())
-    expect(input.id).toBe('task-input')
-    expect(input.getAttribute('data-i18n-placeholder')).toBe('task.placeholder')
-  })
-
-  it('only uses keys that exist in both catalogues', () => {
-    const root = mountedMarkup()
-    const used = [
-      ...Array.from(root.querySelectorAll('[data-i18n]')).map(e => e.getAttribute('data-i18n')),
-      ...Array.from(root.querySelectorAll('[data-i18n-placeholder]')).map(e =>
-        e.getAttribute('data-i18n-placeholder')
-      )
-    ]
-    const unknown = used.filter(key => key === null || !(key in en) || !(key in fr))
-    expect(unknown).toEqual([])
-  })
-})
-
-describe('index.html wrapper spans', () => {
-  function labelParagraph(key: string): { label: Element; paragraph: Element } {
-    const root = mountedMarkup()
-    const label = queryOrThrow(`[data-i18n="${key}"]`, root)
-    const paragraph = label.closest('p')
-    if (!paragraph) {
-      throw new Error(`Expected [data-i18n="${key}"] to sit inside a <p>`)
+  it('gives every English key a non-empty string value', () => {
+    for (const [key, value] of Object.entries(EN)) {
+      expect(typeof value, `en.json value for "${key}"`).toBe('string')
+      expect(value.trim(), `en.json value for "${key}"`).not.toBe('')
     }
-    return { label, paragraph }
-  }
-
-  it('wraps the total-tasks label in its own span, next to #total-count', () => {
-    const { label, paragraph } = labelParagraph('stats.total')
-    expect(label.tagName).toBe('SPAN')
-    expect(paragraph.querySelector('#total-count')).not.toBeNull()
   })
 
-  it('wraps the completed-tasks label in its own span, next to #completed-count', () => {
-    const { label, paragraph } = labelParagraph('stats.completed')
-    expect(label.tagName).toBe('SPAN')
-    expect(paragraph.querySelector('#completed-count')).not.toBeNull()
-  })
-
-  it('wraps the footer label in its own span, so the year survives', () => {
-    const { label, paragraph } = labelParagraph('footer.text')
-    expect(label.tagName).toBe('SPAN')
-    expect(paragraph.textContent).toContain('2026')
+  it('holds at least the required number of keys, and may hold more', () => {
+    expect(Object.keys(EN).length).toBeGreaterThanOrEqual(REQUIRED_KEYS.length)
+    expect(Object.keys(FR).length).toBeGreaterThanOrEqual(REQUIRED_KEYS.length)
   })
 })

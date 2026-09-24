@@ -1,22 +1,21 @@
 import { TaskManager } from './taskManager'
-import { applyTranslations, loadTranslations, setLanguage } from './i18n'
+import { applyTranslations, loadTranslations, setLanguage, t } from './i18n'
 import { TaskFilter } from './types'
 import './styles.css'
 
-let taskManager: TaskManager
-
-/** Shown in the task list when the app never finished starting. */
-const BOOT_FAILURE_MESSAGE = 'The task manager failed to start. Reload the page to try again.'
+/** The one task list the page works on. Left undefined when the boot sequence failed. */
+let taskManager: TaskManager | undefined
 
 /**
- * Brings the page to life: catalogues, state, listeners, first paint.
+ * Brings the page to life: loads the catalogues, translates the static markup, restores the
+ * saved tasks, wires the controls and paints the first frame.
  *
- * The translation pass runs before anything is rendered, so the static English text in
- * `index.html` is replaced rather than briefly shown.
+ * The translation pass runs before the list is built so the page is never shown in a mix of
+ * two languages.
  *
- * @returns a promise that settles once the page is interactive
+ * @returns a promise that rejects if any of those steps fails, so the caller can tell the user.
  */
-async function init() {
+async function init(): Promise<void> {
   await loadTranslations()
   applyTranslations()
   taskManager = new TaskManager()
@@ -25,12 +24,13 @@ async function init() {
 }
 
 /**
- * Binds the page's controls to the task manager.
+ * Subscribes the page's controls to the task list: the add form, the two language buttons and
+ * the three filter buttons.
  *
- * The filter buttons are bound as a group and read their own `data-filter`, so adding a
- * filter to the markup needs no change here.
+ * Called once, from {@link init}; the per-task checkbox and delete listeners are attached by
+ * the renderer instead, because those elements are rebuilt on every repaint.
  */
-function setupEventListeners() {
+function setupEventListeners(): void {
   const form = document.getElementById('task-form') as HTMLFormElement
   const langEnBtn = document.getElementById('lang-en')
   const langFrBtn = document.getElementById('lang-fr')
@@ -47,39 +47,38 @@ function setupEventListeners() {
       if (filter) {
         document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'))
         target.classList.add('active')
-        taskManager.setFilter(filter as TaskFilter)
+        taskManager?.setFilter(filter as TaskFilter)
       }
     })
   })
 }
 
 /**
- * Turns a form submission into a new task.
+ * Turns a form submission into a new task and clears the field.
  *
- * Suppresses the browser's own navigation, and treats a blank or whitespace-only entry
- * as nothing at all rather than as an empty task.
+ * A description of nothing but whitespace is dropped silently: the field is `required`, so the
+ * browser has already asked once, and a second complaint would add noise, not information.
  *
- * @param e the form's submit event
+ * @param e - the form's submit event; its default navigation is cancelled.
  */
-function handleSubmit(e: Event) {
+function handleSubmit(e: Event): void {
   e.preventDefault()
   const input = document.getElementById('task-input') as HTMLInputElement
   const select = document.getElementById('priority-select') as HTMLSelectElement
   if (input.value.trim()) {
-    taskManager.addTask(input.value, select.value as 'low' | 'medium' | 'high')
+    taskManager?.addTask(input.value, select.value as 'low' | 'medium' | 'high')
     input.value = ''
   }
 }
 
 /**
- * Switches the interface to another language and repaints everything that carries text.
+ * Switches the interface to another language: marks the chosen button, rewrites every
+ * catalogue-driven string on the page, then repaints the task list so the strings the renderer
+ * owns — the delete buttons, a pending storage notice — follow too.
  *
- * Both halves matter: `applyTranslations()` rewrites the static markup, and the repaint
- * rewrites the task rows, whose delete button is built in code rather than in the page.
- *
- * @param lang two-letter code of the language to switch to
+ * @param lang - the language code to switch to, `'en'` or `'fr'`.
  */
-function switchLanguage(lang: string) {
+function switchLanguage(lang: string): void {
   setLanguage(lang)
 
   document.querySelectorAll('.language-selector button').forEach(btn => {
@@ -90,34 +89,32 @@ function switchLanguage(lang: string) {
   activeBtn?.classList.add('active')
 
   applyTranslations()
-  taskManager.render()
+  taskManager?.render()
 }
 
 /**
- * Tells the user, in the page, that the app did not start.
+ * Puts a boot failure where the user is already looking.
  *
- * A `.catch` that only logs would be worse than the crash it replaces: the static HTML
- * still paints, no control is wired, and the page looks normal while every click does
- * nothing. The message has to land somewhere the user is already looking.
+ * A `.catch` that only logged would turn a loud failure into a silent one: the static markup
+ * still paints, no control is wired, and the page looks normal while every click does nothing.
+ * The notice goes into the task list when there is one, and into the top of the body when the
+ * page is so broken that there is not.
+ *
+ * @param message - the already-translated sentence to show.
  */
-function showStartupFailure() {
-  const taskList = document.getElementById('tasks')
+function showBootFailure(message: string): void {
+  const list = document.getElementById('tasks')
+  const host = list ?? document.body
+  if (!host) return
 
-  if (taskList) {
-    const banner = document.createElement('li')
-    banner.className = 'app-error'
-    banner.textContent = BOOT_FAILURE_MESSAGE
-    taskList.replaceChildren(banner)
-    return
-  }
-
-  const fallback = document.createElement('p')
-  fallback.className = 'app-error'
-  fallback.textContent = BOOT_FAILURE_MESSAGE
-  document.body.appendChild(fallback)
+  const notice = document.createElement(list ? 'li' : 'p')
+  notice.className = 'app-notice app-notice--error'
+  notice.setAttribute('role', 'alert')
+  notice.textContent = message
+  host.prepend(notice)
 }
 
 init().catch(error => {
-  console.error('Task Manager failed to start:', error)
-  showStartupFailure()
+  console.error('Task Manager failed to start', error)
+  showBootFailure(t('error.boot'))
 })

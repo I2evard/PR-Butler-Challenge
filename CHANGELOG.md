@@ -5,89 +5,99 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — 2026-09-23
 
 ### Security
 
-- **Fixed a stored XSS hole in the task list.** `render()` in
-  `scaffold/website/src/taskManager.ts` wrote user-supplied task text with
-  `innerHTML`, so a task named `<img src=x onerror=...>` executed on every paint.
-  It now uses `textContent`; a regression test asserts the rendered node has no
-  element children.
-- **Removed a credential from a source comment** in
-  `scaffold/website/src/taskManager.ts`. `loadFromStorage()` carried a `temp auth:`
-  token. The token line is gone and the internal hostname has been stripped from the
-  `TODO: migrate to API backend` line above it; the TODO itself is kept, because the
-  intention to migrate is legitimate information for the next reader.
-  Note for reviewers: deleting the line does not remove the token from git history.
-- **Hardened restoration from `localStorage`** in
-  `scaffold/website/src/taskManager.ts`. Stored data is now validated field by field
-  before it is trusted: `id` must be a safe positive integer, duplicate ids are
-  dropped, and `createdAt` is revived into a real `Date`. Two stored tasks sharing an
-  id previously meant one click deleted both rows and a checkbox toggled the wrong one.
+- **Closed a stored XSS hole in `scaffold/website/src/taskManager.ts`.** The task text was
+  written to the DOM with `innerHTML`, so a task named `<img src=x onerror=...>` executed on
+  every repaint. It is now written with `textContent`; there is no case in this application
+  where task text should be parsed as markup.
+- **Removed a credential from a comment in `scaffold/website/src/taskManager.ts`.** A
+  `temp auth:` token sat in `loadFromStorage()`. The token line is gone and the internal
+  hostname has been stripped from the `// TODO: migrate to API backend` line above it; the
+  TODO itself is kept, because the intention to migrate is information the next reader needs.
+- **Validated everything read back out of `localStorage`** in
+  `scaffold/website/src/taskManager.ts`. Entries are rejected unless every field the `Task`
+  interface declares type-checks, and `id` must be a safe positive integer. Duplicate ids are
+  dropped on restore — `deleteTask` filters by id, so two tasks sharing one meant a single
+  click deleted both.
 
 ### Added
 
-- **French locale completed** — `scaffold/website/src/translations/fr.json` went from
-  2 keys to the full 14, in `en.json` key order.
-- **Translations now reach the DOM.** `applyTranslations()` added to
-  `scaffold/website/src/i18n.ts`; `scaffold/website/index.html` gained 12 `data-i18n`
-  attributes and 1 `data-i18n-placeholder`. The two stats labels and the footer label
-  were each wrapped in their own `<span>` so that translating them no longer wipes the
-  counters or the year beside them.
-- **Visible failure reporting.** `scaffold/website/src/main.ts` shows
-  `<li class="app-error">` in the task list when start-up fails;
-  `scaffold/website/src/taskManager.ts` shows `<li class="storage-notice">` when saved
-  data had to be discarded.
-- **Test suite** — `scaffold/website/src/tests/` gained `fixture.ts`, `i18n.test.ts`,
-  `main.test.ts`, `taskManagerBehaviour.test.ts` and `translations.test.ts`: 55 new
-  cases on top of the 2 that shipped. The DOM fixture is read from `index.html` rather
-  than retyped.
-- **Toolchain** — Prettier and ESLint added to `scaffold/website/package.json`, with
-  `scaffold/website/.prettierrc` and `scaffold/website/eslint.config.js` matched to the
-  style already in the repository. New scripts: `format`, `format:check`, `lint`,
-  `typecheck`.
-- **`jsdom` added as a dev dependency** in `scaffold/website/package.json`.
-  `vitest.config.ts` declared `environment: 'jsdom'` without it, so the suite could not
-  start at all.
-- **Documentation** — `scaffold/website/README.md` gained **Features**, **Testing** and
-  **Contributing**; TSDoc added to every exported function and public method in
-  `scaffold/website/src/i18n.ts`, `main.ts` and `taskManager.ts`.
+- **French translations** for the twelve missing keys in
+  `scaffold/website/src/translations/fr.json` (2 keys → 22).
+- **Five keys for strings that had none**, in both `en.json` and `fr.json`: `task.list` for the
+  "Your Tasks" heading, `badge.low` / `badge.medium` / `badge.high` for the priority chip, and
+  `page.title` for the browser-tab title. They were the last English words on the French page.
+  The heading in particular sat beside `Add New Task`, which *did* have a key — two sibling
+  headings, one translated and one not.
+- **`scaffold/website/src/tests/noEnglishLeft.test.ts`**, which renders the real page in French
+  and fails on any text node, `placeholder`, `title`, `aria-label` or `document.title` that is
+  not a French catalogue value and not on an explicit allow-list. The allow-list is the two
+  language buttons and the text the user typed. Key counting and catalogue comparison both exit
+  0 on a page with English on it; this test does not.
+- **`applyTranslations()` in `scaffold/website/src/i18n.ts`**, which rewrites every
+  `[data-i18n]` text and `[data-i18n-placeholder]` placeholder and sets both
+  `document.documentElement.lang` and `document.title`. Before this, `switchLanguage()` moved
+  the active button and nothing else, so a fully populated `fr.json` still rendered English.
+- **Translation attributes in `scaffold/website/index.html`**: thirteen `data-i18n`, one
+  `data-i18n-placeholder`, and three new `<span>` wrappers so that tagging the two stats
+  labels and the footer text does not wipe the counters or the year.
+- **Three new catalogue keys** in both `en.json` and `fr.json` — `error.storage.read`,
+  `error.storage.write`, `error.boot` — for the sentences this change puts on screen.
+- **Error handling on both storage paths and on boot**, in
+  `scaffold/website/src/taskManager.ts` and `scaffold/website/src/main.ts`. A rejected read, a
+  rejected write and a failed boot each put a visible `.app-notice` where the user is already
+  looking, and a later successful write clears it.
+- **`.app-notice`, `.stats-label` and `footer .footer-text` rules** in
+  `scaffold/website/src/styles.css`, so every element this change adds to the page is styled.
+- **81 test cases** across `scaffold/website/src/tests/` — `markup.test.ts`,
+  `translations.test.ts`, `i18n.test.ts`, `main.test.ts`, `noEnglishLeft.test.ts` and the
+  extended `taskManager.test.ts` — plus the shared DOM fixture `src/tests/fixture.ts`, which
+  reads the page and its `<title>` out of `index.html` instead of retyping them.
+- **A toolchain**: `prettier`, `eslint`, `@eslint/js` and `typescript-eslint`, with
+  `scaffold/website/.prettierrc`, `scaffold/website/eslint.config.js`, and the `format`,
+  `format:check`, `lint` and `typecheck` scripts in `scaffold/website/package.json`.
+- **`jsdom`** as a dev dependency. `vitest.config.ts` declared `environment: 'jsdom'` and
+  `package.json` did not list it, so the suite could not start at all.
+- **An enforced coverage threshold** in `scaffold/website/vitest.config.ts`
+  (`thresholds: { statements: 80 }`). `vitest run --coverage` exits 0 at any coverage, so the
+  80% in the brief had never once been able to turn red.
+- **`README.md` sections** in `scaffold/website/README.md`: Features, Testing, Contributing.
 
 ### Changed
 
-- **`render()` split** in `scaffold/website/src/taskManager.ts`, from 50 lines doing
-  five jobs into a short orchestrator plus `filterTasks()`, `buildTaskRow()` and
-  `buildStorageNotice()`. Behaviour-preserving: the same 57 tests pass against both
-  shapes, with no test edited.
-- **Formatting** applied across `scaffold/website/index.html`, `src/i18n.ts`,
-  `src/main.ts`, `src/styles.css`, `src/taskManager.ts` and
-  `src/translations/fr.json`. `handleSubmit()` in `src/main.ts` — which had zero
-  indentation and no spaces around operators — is reindented.
-- **Marker comments removed together with the work they described**, in
-  `scaffold/website/src/taskManager.ts` (`// Long function that should be refactored`)
-  and `scaffold/website/src/main.ts` (`// Missing error handling`).
+- **Split `render()` in `scaffold/website/src/taskManager.ts`** from 50 lines doing five jobs
+  into a 16-line orchestrator plus `filterTasks()`, `buildTaskRow()` and `buildNoticeRow()`.
+  Behaviour-preserving: the suite was green before and after, with no test edited.
+- **Replaced the `Math.max(...ids) + 1` id counter** in
+  `scaffold/website/src/taskManager.ts` with `allocateId()`, which allocates against the ids in
+  use and wraps at the edge of the safe range. A stored `Number.MAX_SAFE_INTEGER` passes
+  validation, and `max + 1` then stopped incrementing — every task created afterwards got the
+  same id.
+- **Reformatted `scaffold/website/index.html`, `src/main.ts`, `src/taskManager.ts`,
+  `src/i18n.ts` and `src/styles.css`** with Prettier. `handleSubmit()` in `main.ts` had zero
+  indentation and no spaces around `=`, `(` or `|`.
+- **`switchLanguage()` in `scaffold/website/src/main.ts`** now applies the translations and
+  repaints the task list, instead of only moving the `active` class.
+- **The priority chip is translated in `scaffold/website/src/taskManager.ts`.** It was
+  `task.priority.toUpperCase()`, which reads `LOW` in every language; it is now
+  `t('badge.' + priority)`. The `priority-*` class still carries the raw priority, because the
+  colour must not move with the language.
 
 ### Fixed
 
-- **Start-up failures no longer disappear.** `init()` in
-  `scaffold/website/src/main.ts` is `async` and its rejection was uncaught, so a
-  failed boot left a blank page with nothing to explain it. It now has a `.catch` that
-  logs *and* puts a message on screen.
-- **`JSON.parse` in `loadFromStorage()` is guarded**, in
-  `scaffold/website/src/taskManager.ts`. Corrupt `localStorage` used to throw out of
-  the `TaskManager` constructor.
-- **Task creation survives a saturated id.** `nextId` was `Math.max(...ids) + 1`; a
-  stored id of `Number.MAX_SAFE_INTEGER` made it stop incrementing, so every task
-  created afterwards got the same id. Ids are now allocated against the set in use.
-- **The Delete button follows the chosen language.** It is built in code, so it was the
-  one label the markup-based translation pass could not reach; it now uses
-  `t('button.delete')`.
-
-### Not changed, and why
-
-- `scaffold/expected_fixes.json` lists an unused variable named `unusedVariable`. No
-  such symbol exists anywhere in the source; it is reported as absent rather than
-  invented to match the answer key.
-- The "Your Tasks" heading and the priority badge have no key in `en.json` and are left
-  in English. Inventing a key would put a string in the catalogue that no one asked for.
+- **`init()` in `scaffold/website/src/main.ts` is no longer an unhandled rejection.** It has a
+  `.catch` that logs *and* shows a message on the page — inside the task list, or at the top of
+  the body when the page has no task list.
+- **`loadFromStorage()` no longer throws out of the constructor** on corrupt `localStorage`
+  data. `JSON.parse` was unguarded, so a bad value gave the user a blank page with nothing in
+  the interface to say why.
+- **`saveToStorage()` no longer throws between the push and the repaint.**
+  `localStorage.setItem` throws on a full quota and in Safari's private mode; the task used to
+  end up in memory with the page unchanged and storage empty, and nothing said so.
+- **Removed two marker comments, each with its work done**:
+  `// Long function that should be refactored` and `// Missing error handling` in
+  `scaffold/website/src/taskManager.ts` and `scaffold/website/src/main.ts`. Three further
+  comments describing deliberate defects were removed with the defects.

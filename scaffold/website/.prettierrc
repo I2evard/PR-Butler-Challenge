@@ -6,14 +6,5 @@
   "trailingComma": "none",
   "arrowParens": "avoid",
   "endOfLine": "crlf",
-  "overrides": [
-    {
-      "files": "*.css",
-      "options": { "tabWidth": 4 }
-    },
-    {
-      "files": "*.html",
-      "options": { "tabWidth": 4 }
-    }
-  ]
+  "overrides": [{ "files": ["*.css", "*.html"], "options": { "tabWidth": 4 } }]
 }

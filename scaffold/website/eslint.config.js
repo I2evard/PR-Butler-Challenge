@@ -1,24 +1,24 @@
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 
-// Minimal, deliberately conventional rule set: the repository shipped without a linter,
-// so these rules are the ones this run introduces. "0 violations" means "none under
-// these rules", not "the code is perfect" — a stricter config would find more.
+// Minimal rule set, chosen to match the style the repository already uses rather than to
+// impose a new one: unused symbols, const-over-let, no var, strict equality.
 export default tseslint.config(
-  { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
+  { ignores: ['dist', 'coverage', 'node_modules'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],
     languageOptions: {
-      ecmaVersion: 2022,
+      ecmaVersion: 2020,
       sourceType: 'module'
     },
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'prefer-const': 'error',
       'no-var': 'error',
-      eqeqeq: ['error', 'always']
+      eqeqeq: ['error', 'always'],
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }]
     }
   }
 )

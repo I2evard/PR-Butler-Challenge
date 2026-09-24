@@ -87,7 +87,7 @@ npm run test:coverage
 >
 > Do it this way, so two runs produce the same structure:
 >
-> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the task input. One correct run produced **12 of the first and 1 of the second, 13 in all**: the page title heading, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer text — and the input's placeholder.
+> 1. Add `data-i18n="<key>"` to every element in `index.html` whose text comes from the catalogue, and `data-i18n-placeholder="<key>"` to the task input. One correct run produced **13 of the first and 1 of the second, 14 in all**: the page title heading, the Add-New-Task heading, the three priority options, the submit button, the three filter buttons, the two stats labels, the footer text — and the input's placeholder.
 >
 >    **That number is a result, not a target.** Derive your own from the catalogue and the page; if yours differs, your derivation wins and the difference is what you report. A count stated as authoritative is a list to be trusted, and the next item is about exactly why lists here must not be.
 >
@@ -101,22 +101,88 @@ npm run test:coverage
 >
 >    Wrap the label in its own `<span>` and tag that. Writing the key onto the parent `<p>` wipes the two counters and the year.
 >
+>    ⚠️ **Check the stylesheet before you add a `<span>`.** `styles.css` already carries `.stats span { font-weight: bold; color: #667eea }`, written for the counters. A new `<span>` around "Total tasks" inherits it, and the labels come out bold and purple — **a visible regression introduced by the fix itself**. Give the label its own class and a rule that restores its appearance. Every wrapper element you introduce inherits whatever the existing selectors say about its tag; look before you wrap.
+>
 >    **Do not work from this list — derive it.** It is here to show the shape of the fix, not to be trusted as complete. The test is mechanical: an element can carry `data-i18n` only if its text is *the whole* of its content. Anything with a sibling node — a counter, a separator, a date — needs the wrapper. Walk the page and apply that test to every element you are about to tag; the third case above was missing from an earlier version of this file, and a run that trusted the list would have wiped the completed counter on every language switch.
 > 2. Add `applyTranslations(root = document)` to `src/i18n.ts`: walk both attribute sets and rewrite `textContent` and `placeholder`.
 >
 >    **Set `document.documentElement.lang` in the same pass.** The page ships `<html lang="en">` and nothing ever moves it, so in French mode a screen reader pronounces "Mon Gestionnaire de Tâches" with an English voice and the browser hyphenates by English rules. It is one line, it is the only part of "switch language" that assistive technology can actually hear, and no visual check will ever miss its absence — because there is nothing to see.
 > 3. Call it from `init()` and from `switchLanguage()`, and repaint the task list after — the Delete button is built in `taskManager.ts` and must use `t('button.delete')`.
 >
-> **Some visible strings have no key in `en.json`, and that is by design — leave them in English and say so.** Inventing a key puts a string in the catalogue that no one asked for, and breaks the "all 14 keys" validation. On this page there are four, in two different categories:
+> **Some visible strings have no key in `en.json`. Almost none of them should stay that way.**
 >
-> | String | Why it has no key |
-> |---|---|
-> | the "Your Tasks" heading | the catalogue simply omits it |
-> | the priority badge (`LOW` / `MEDIUM` / `HIGH`) | `priority.*` exists but reads "Low Priority" — those are the `<select>` labels, not a short chip |
-> | the language buttons (`English` / `Français`) | untranslatable by nature: each is already written in the language it selects |
-> | the document `<title>` | untranslatable by nature at boot; changing it needs `document.title`, not `textContent` |
+> The test is not "does the catalogue already have a key for it". It is: **would the user see this string in a language they did not choose?** If yes, it is part of the job — a page that switches to French and keeps English words has not switched. A missing key is an omission in the catalogue, not a decision someone made.
 >
-> **Derive this list, do not trust it.** Same rule as the counts above: what is written here is what one correct run produced, and a later scaffold may differ. The useful distinction is between *the catalogue omits it* — report it — and *it cannot be translated this way* — explain it.
+> The giveaway on this page: `<h2>Your Tasks</h2>` sits directly beside `<h2>Add New Task</h2>`, which *does* have a key. Two sibling headings, one translated and one not, is an oversight — and a Butler that leaves it reproduces the oversight instead of fixing it.
+>
+> **Build the detector in the next subsection first, run it, and work from what it names.** The table below is what one correct run produced; the detector is what tells you the truth about the page in front of you.
+>
+> | String | Key | What to do |
+> |---|---|---|
+> | the "Your Tasks" heading | `task.list` | add to both catalogues, tag the element |
+> | the priority badge (`LOW` / `MEDIUM` / `HIGH`) | `badge.low` · `badge.medium` · `badge.high` | **not** `priority.*` — that key is taken and reads "Low Priority", the `<select>` label, not a short chip. **When the natural key is taken, name the new one after the surface it renders on, not the concept.** |
+> | the document `<title>` | `page.title` | **not** `app.title` — taken by the `<h1>`. Set `document.title` inside `applyTranslations()`. |
+> | the language buttons (`English` / `Français`) | — | **leave them.** Each is already written in the language it selects; translating them would show "Anglais" to someone who reads only English. This is the one genuine exception. |
+>
+> Three traps in that row about the badge, and each one passes every English test:
+>
+> - **The badge is built in code, so `applyTranslations()` never sees it.** The language switch has to re-run the *renderer*, not only the translation pass. It probably already does — for the Delete button — but verify it, because if it does not, the badge keeps the old language with the whole suite green.
+> - **Keep the raw priority in the class.** `priority-badge priority-${task.priority}` drives the colour and sits on the same element as the text you are translating. Translate the label; leave the class alone, or the styling dies silently.
+> - **This change is invisible in English.** Reverting `t('badge.' + p)` to `priority.toUpperCase()` produces byte-identical English output, so every English assertion stays green — only a French test or the detector can kill that mutant. It is this subsection's whole thesis in one line of code; seed it and watch what fails.
+>
+> `document.title` and `documentElement.lang` both escape the `root` argument of `applyTranslations(root)` on purpose: they are properties of the document, not of a subtree, so `applyTranslations(panel)` legitimately changes the browser tab. Say so in a comment rather than leaving the next reader to wonder.
+>
+> **Every key you add goes in `PR_REQUEST.md`** with the string it carries and why the run needed it. Adding vocabulary silently is how a catalogue rots; adding it with a reason is how it grows.
+>
+> **Derive this list, do not trust it.** What is written here is what one correct run produced, and a later scaffold may differ. Walk the rendered page in the non-default language and list every English word still on screen — that list is the work.
+>
+> ### Do not verify translation with a command that exits 0
+>
+> ⚠️ **This is the single most important paragraph in Step 1, because every check that feels like it covers translation does not.** Counting keys exits 0. Comparing `en.json` to `fr.json` exits 0. A suite of jsdom tests asserting on individual elements exits 0. All three can be green while a heading sits on the French page in English — and they were, on four consecutive runs of this Skill. The defect was found by a human looking at the screen.
+>
+> Those checks measure a **proxy**: *are the keys present, do the files agree, do the elements I thought to test carry the right text.* The thing itself is different: **is there any English left on a French page.** Only the second one is the requirement, and only the second one finds what you forgot to tag.
+>
+> **Write the ALLOW-LIST check. It is the one that works, so it is the one with the code.**
+>
+> The obvious version — compare every text node against the English catalogue's values — is the wrong instrument, and it fails in the flattering direction. On this scaffold, run against the broken page, **it returns an empty list**: all four untagged strings had no key, so no English value could match them. Implement that version, see green, and you have reproduced the exact failure this subsection exists to prevent. Keep it if you like as a second assertion; never as the first.
+>
+> Invert it. Instead of listing what is forbidden, list what is **permitted**, and fail on everything else:
+>
+> ```ts
+> // Everything the page may show in a language other than the active one.
+> const TYPED = 'Ma tache de test'
+> const ALLOWED = new Set(['English', 'Français', TYPED])
+>
+> seedPageTitle()        // see the vacuous-pass warning below
+> await boot(); switchLanguage('fr'); addTask(TYPED)
+>
+> const strings: string[] = []
+> const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+> for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+>   const t = n.textContent?.trim()
+>   if (t && /\p{L}/u.test(t)) strings.push(t)          // words only
+> }
+> for (const el of document.querySelectorAll('[placeholder],[title],[aria-label]')) {
+>   for (const a of ['placeholder', 'title', 'aria-label']) {
+>     const v = el.getAttribute(a)?.trim()
+>     if (v && /\p{L}/u.test(v)) strings.push(v)
+>   }
+> }
+> if (/\p{L}/u.test(document.title)) strings.push(document.title)
+>
+> expect(strings.length).toBeGreaterThan(10)            // the walk saw the page
+> const french = new Set(Object.values(fr))
+> expect(strings.filter(s => !french.has(s) && !ALLOWED.has(s))).toEqual([])
+> ```
+>
+> Four things in there are load-bearing, and leaving any of them out gives a test that passes on a broken page:
+>
+> 1. **`/\p{L}/u` — words only.** A rendered page is mostly not words: `0`, `1`, `:`, `•`, `2026`, whitespace. Without this filter the allow-list has to enumerate them all and nobody maintains that. This one line is the difference between a rule you can write and one you abandon.
+> 2. **The test types its own task text and allow-lists that literal.** User content is not knowable at assertion time otherwise, and the tempting alternative — "anything inside `.task-text` is fine" — exempts a whole region of the page by position, which is where an untranslated string would hide.
+> 3. **Seed `document.title` from `index.html`.** Your fixture almost certainly mounts `<body>` only, which leaves `document.title` as `''` — no letters, filtered out, assertion passes **against nothing**. Same for `title` and `aria-label` if the page has none: the sweep examines zero elements and reports success. Read the `<title>` out of `index.html` in the fixture and set it before boot.
+> 4. **Assert the walk saw something.** `expect(strings.length).toBeGreaterThan(10)` is what separates "nothing was wrong" from "nothing was looked at" — the same rule Gate 2 and the mutation harness rest on.
+>
+> **What this check then requires of your markup, permanently:** one catalogue string per text node. `Total des tâches : 3` as a single node fails on a correct page, and so does splitting a value so a fragment lands alone. Step 1's wrapper spans already produce that shape here, for an unrelated reason — but it is now a constraint on how you write markup, not only a test. A proper noun in its own node (`TypeScript`) needs allow-listing too: a name is not a language.
 >
 > ⚠️ **That tolerance covers what you INHERITED. It does not cover what you ADD.** Step 2's error handling puts new sentences on screen — a storage-discarded notice, a boot-failure banner. Hard-coding those in English ships untranslated user text **in a task whose subject is translation**, and on a French screen the heading reads "Mon Gestionnaire de Tâches" above an English error. Every string this run makes visible gets a key, in **both** catalogues.
 >
@@ -147,7 +213,7 @@ npm run test:coverage
    "typecheck": "tsc --noEmit"
    ```
 
-   > **`index.html` is in the glob on purpose.** The brief says *all source files*, and Step 1 makes `index.html` the **most-modified file of the whole run** — 13 new attributes and 3 new wrapper elements. A glob of `src/**` leaves it covered by no gate at all: `format:check` never reads it, `eslint src` never reads it, and the coverage table cannot see it. The one file the run changes most would be the one nothing checks.
+   > **`index.html` is in the glob on purpose.** The brief says *all source files*, and Step 1 makes `index.html` the **most-modified file of the whole run** — 14 new attributes and 3 new wrapper elements. A glob of `src/**` leaves it covered by no gate at all: `format:check` never reads it, `eslint src` never reads it, and the coverage table cannot see it. The one file the run changes most would be the one nothing checks.
    >
    > It is not Prettier-clean in the scaffold as delivered, so adding it produces a real diff on the first run. **Expect that diff to be the whole file, not a handful of lines**, and do not go hunting for a setting that avoids it: Prettier indents `<head>` and `<body>` one level under `<html>`, this page does not, and no `tabWidth` value changes that. Roughly 54 lines move. This is the one file where item 3's "do not rewrite untouched lines" rule is knowingly set aside — say so in `PR_REQUEST.md` so a reviewer knows the churn was a decision.
    >
@@ -241,7 +307,9 @@ npm run test:coverage
    >
    > The rule behind both: **a repair that makes a failure invisible is not a repair.** Ask what the user sees when the new code path fires, and if the answer is "the same thing as success", the handler is wrong.
    >
-   > **Apply the rule to the WRITE path too, not only the read.** Guarding `loadFromStorage` and leaving `saveToStorage` bare fixes the failure you were pointed at and leaves its twin untouched. `localStorage.setItem` throws on a full quota and in Safari's private mode, and in `addTask` it throws *between* the push and the repaint: the task is in memory, the page shows nothing, storage has nothing — **three states that disagree, and not one word to the user.** Guard the write, tell the user the task could not be saved, and keep the three in agreement.
+   > **Apply the rule to the WRITE path too, not only the read.** Guarding `loadFromStorage` and leaving `saveToStorage` bare fixes the failure you were pointed at and leaves its twin untouched. `localStorage.setItem` throws on a full quota and in Safari's private mode, and in `addTask` it throws *between* the push and the repaint: the task is in memory, the page shows nothing, storage has nothing — **three states that disagree, and not one word to the user.**
+   >
+   > **Keep the task and tell the truth about it — do not roll the push back.** Memory and storage genuinely cannot agree when the write is refused, so the goal is not to make them agree: it is to stop the *page* from lying. Catch the write failure, keep the task in memory, repaint so the user sees what they just typed, and show a notice saying it could not be saved and will be lost on reload. Discarding the task would be the second failure on top of the first.
    >
    > **Every element you add to the page needs a rule in `styles.css`.** A notice appended to a list whose `list-style` is `none` renders as unstyled text with no bullet, no background, no padding and no colour — indistinguishable from empty space. "The message has to land somewhere the user is already looking" is only true if it looks like a message. No test can catch this and neither can any gate; it is on you.
    >
@@ -315,7 +383,9 @@ npm run test:coverage
 
    > `__dirname` does not exist under Vitest's ESM transform — it is `undefined`, and the failure reads like a path problem rather than a module-system one. `import.meta.url` is the ESM equivalent and works in both.
    >
-   > **This helper lands inside `coverage.include: ['src/**/*.ts']` and will appear in the coverage table beside the production files, pulling the headline number down.** Leave it there. Excluding a file from coverage to raise a number is the move Operating Rule 3 forbids, and the honest report — "our own test helper is in the denominator, which costs us a few points" — is worth more than the points. Say so in `PR_REQUEST.md` rather than editing `vitest.config.ts`, which should come out of this run byte-identical to the scaffold.
+   > **This helper lands inside `coverage.include: ['src/**/*.ts']` and will appear in the coverage table beside the production files, pulling the headline number down.** Leave it there. Excluding a file from coverage to raise a number is the move Operating Rule 3 forbids, and the honest report — "our own test helper is in the denominator, which costs us a few points" — is worth more than the points. Say so in `PR_REQUEST.md` rather than adding an exclusion to `vitest.config.ts`.
+   >
+   > **`vitest.config.ts` receives exactly one change in this whole run: Gate 2's `thresholds`.** `provider`, `reporter` and `include` come out byte-identical to the scaffold. Adding enforcement is not weakening; adding an *exclusion* is. That is the line.
 
    > A snippet copied into three test files is three copies to update when the page moves, and the copies drift apart silently — which is the very failure this item exists to prevent, reintroduced one level up. If you find yourself pasting the same two lines a third time, it was a module.
 
@@ -363,6 +433,16 @@ npm run test:coverage
    > **Anchor the seed so it matches once.** After Step 1 there are **two** `applyTranslations()` call sites — `init()` and `switchLanguage()` — so an unanchored replace hits both. That turns the suite red for the wrong reason: the language-switch tests fail, the boot test still passes, and you would score the mutant as caught while the hole is still open. Anchor on the surrounding line in `init()`, then confirm the failures that came back are the **boot** ones.
 
    > **Normalise line endings before matching an anchor.** On a CRLF checkout, a multi-line anchor written with `\n` matches **zero times**, and a seeding script that does not check its match count scores the mutant as *caught* when nothing was ever seeded — a false pass, in the direction that flatters you. Read the file, replace `\r\n` with `\n`, match, then write back in the original form. **Assert the anchor matched exactly once and abort if it did not**, for every seed.
+   >
+   > ⚠️ **A non-zero exit is not proof that a mutant was killed, and this is the trap that produces a perfect fake score.** One run's harness addressed its throwaway copy by a Windows 8.3 short path (`C:\Users\JORDAN~1.LEB\...`). Vite resolved module ids against the long path, **every test file failed to COLLECT**, the command exited non-zero — and all sixteen mutants scored KILLED with **not one assertion ever executed**. A 16/16 that means nothing, and it looks exactly like a 16/16 that means everything.
+   >
+   > Three checks, and the harness is worthless without all three:
+   >
+   > 1. **Run the UNSEEDED copy first and require it green.** If the baseline is not `exit 0` with the full test count, the copy is broken and no score from it is valid. This single check catches the whole family.
+   > 2. **Require the failure to be NAMED tests**, not a file-level error. Parse the output: `Tests N failed` with test names, not `Failed to collect` or `Test Files N failed` with zero cases run.
+   > 3. **Compare the total case count** to the baseline. A mutant that reduces the number of cases *collected* did not fail a test, it broke the run.
+   >
+   > The rule behind it, and it is the same one Gate 2 rests on: **an exit code says a process ended badly, never why.** Any measurement that reads success or failure from an exit code alone is measuring the process, not the thing.
 
    **Report the score: N seeded, M caught.** A survivor is either a missing test or an equivalent mutant — say which, do not leave it ambiguous. Delete the copy when done.
 
@@ -406,7 +486,7 @@ Run in this order and stop at the first failure:
 | 2 | Coverage | `npm run test:coverage` | Statements ≥ 80%, **enforced by the runner, not read off the table** |
 | 3 | Lint | `npm run lint` | Zero errors |
 | 4 | Types | `npx tsc --noEmit` | Zero errors |
-| 5 | Translations | the Step 1 validation command | Both files aligned |
+| 5 | Translations | the Step 1 validation command **and** the no-English-left-on-screen test | Both files aligned **and** nothing outside the allow-list renders in English |
 | 6 | Formatting | `npm run format:check` | No file would be rewritten |
 | 7 | Deliverables | the four files below exist and **name something this run actually changed** | All four present and current |
 | 8 | Idempotence | run every step again | Nothing changes |
@@ -489,6 +569,26 @@ Gate 4 is not in the brief and is worth the two seconds: `vitest` transpiles wit
 3. Confirm every Step 4 deliverable exists and is non-empty.
 
 4. **Do not commit, push, or open the PR.** The Butler prepares; the human decides what ships.
+
+### Filling the Report Card honestly when its slots are too narrow
+
+Step 7's format is locked and cannot be edited. Several of its slots ask for a single number that this workflow makes ambiguous or false. **A fixed format is a reason to write more carefully inside it, never a licence to report a figure you know will be misread.** Put the qualifier in the same Details line:
+
+| Slot | The trap | Write instead |
+|---|---|---|
+| `[X of 14 French keys added]` | This Skill orders you to add keys **beyond** the 14. "14" alone hides them. | `12 of 14 added, 2 preserved; 3 further keys added to both catalogues for sentences this run puts on screen` |
+| `[X files formatted]` | Rewritten, or examined? The two differ by a factor of three. | `5 rewritten of 14 examined` |
+| `[X functions documented]` | Step 4 names 9; the Success Criteria demand the whole public surface. | `17 documented — the 9 named plus the rest of the public surface` |
+| `[X lint violations fixed]` | The scaffold has no linter, so the honest answer for **it** is 0 — but you installed one before writing code, so your own additions can raise real findings. Reporting a flat 0 hides work you actually did. | `0 in the delivered scaffold — it shipped with no linter, so this run wrote the rules that judge it; N raised and fixed in code this run added` |
+
+### `scaffold/expected_fixes.json` is an answer key, not a measurement
+
+Treat it as a to-do list to satisfy, and as a claim to verify — it is stale in at least two places on this scaffold:
+
+- `current_coverage: 30` — the measured baseline is **26.02%**. Report what you measured, and say the key disagrees.
+- `unused_variables: ["unusedVariable"]` — the symbol does not exist in the source. Report it absent; do not invent one to match.
+
+Its `missing_keys`, `functions_needing_refactor`, `missing_docstrings`, `readme_sections_needed` and `quality_gates` are accurate and are the parts to work from.
 
 ---
 
@@ -626,6 +726,7 @@ unticked box is a finding to report, not a reason to keep going.
 - [ ] **A stored `Number.MAX_SAFE_INTEGER` id still lets the app hand out two distinct ids afterwards** — it passes validation, so only the allocator can catch it; `max + 1` fails this box
 - [ ] **Gate 2 can actually fail** — `thresholds` is in `vitest.config.ts`, and removing tests in a throwaway copy makes `npm run test:coverage` exit non-zero
 - [ ] **Every string this run puts on screen has a key in both catalogues** — no English sentence appears while the UI is in French
+- [ ] **A test walks the rendered French page and fails on any English left on screen** — text nodes, `placeholder`, `title`, `aria-label` and `document.title`, against an explicit allow-list. Counting keys is not this test; four runs passed the key count with an English heading on the page.
 - [ ] **Every element this run adds to the page has a rule in `styles.css`** — a notice with no styling is indistinguishable from empty space
 - [ ] **The write path fails loudly too** — a throwing `localStorage.setItem` tells the user, and does not leave memory, page and storage disagreeing
 - [ ] **`document.documentElement.lang` follows the selected language** — the one part of the switch that assistive technology can hear
